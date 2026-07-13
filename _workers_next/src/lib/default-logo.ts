@@ -114,16 +114,17 @@ export function buildDefaultLogoSvg(seed: string): string {
     const normalizedSeed = seed.trim() || "ldc-shop"
     const random = createRandom(hashString(normalizedSeed))
 
-    const hue = Math.floor(random() * 360)
-    const accentHue = (hue + 45 + Math.floor(random() * 130)) % 360
-    const bgStart = hsl(hue, 70, 54)
-    const bgEnd = hsl((hue + 28 + Math.floor(random() * 40)) % 360, 78, 24)
-    const glow = hsl((accentHue + 20) % 360, 86, 72)
-    const shell = hsl((hue + 220) % 360, 28, 97)
-    const shellSoft = hsl((accentHue + 170) % 360, 40, 84)
-    const accent = hsl(accentHue, 84, 58)
-    const accentSoft = hsl((accentHue + 8) % 360, 92, 80)
-    const border = hsl((hue + 210) % 360, 22, 94)
+    // Lucky clover green family (fresh mint → deep forest)
+    const hue = 128 + Math.floor(random() * 32) // ~128-160
+    const accentHue = (hue + 18 + Math.floor(random() * 24)) % 360
+    const bgStart = hsl(hue, 58, 46)
+    const bgEnd = hsl((hue + 12 + Math.floor(random() * 18)) % 360, 62, 28)
+    const glow = hsl((accentHue + 8) % 360, 72, 72)
+    const shell = hsl(hue, 42, 92)
+    const shellSoft = hsl(accentHue, 48, 78)
+    const accent = hsl((accentHue + 8) % 360, 70, 62)
+    const accentSoft = hsl((accentHue + 12) % 360, 78, 82)
+    const border = hsl(hue, 30, 90)
     const palette: LogoPalette = {
         bgStart,
         bgEnd,
@@ -134,8 +135,20 @@ export function buildDefaultLogoSvg(seed: string): string {
         accentSoft,
         border,
     }
-    const variant = Math.floor(random() * 7)
-    const mark = buildMarkVariant(variant, random, palette)
+
+    // Prefer clover mark; occasionally other organic variants
+    const variant = random() > 0.35 ? 6 : Math.floor(random() * 6)
+    const mark = variant === 6
+        ? `
+  <g transform="translate(32 30)">
+    <ellipse cx="0" cy="-9" rx="6.2" ry="8" fill="${palette.shell}" />
+    <ellipse cx="9" cy="0" rx="8" ry="6.2" fill="${palette.shellSoft}" />
+    <ellipse cx="0" cy="9" rx="6.2" ry="8" fill="${palette.shell}" />
+    <ellipse cx="-9" cy="0" rx="8" ry="6.2" fill="${palette.shellSoft}" />
+    <circle cx="0" cy="0" r="3.2" fill="${palette.accent}" />
+  </g>
+  <path d="M32 38c0 4 1 7.5 3 10.5" stroke="${palette.accentSoft}" stroke-width="2.4" stroke-linecap="round" />`.trim()
+        : buildMarkVariant(variant, random, palette)
     const signature = buildSignature(random, palette)
 
     return `

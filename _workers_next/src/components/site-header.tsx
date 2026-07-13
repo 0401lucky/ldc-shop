@@ -77,7 +77,7 @@ export async function SiteHeader() {
     }
 
     return (
-        <header className="sticky top-0 z-40 w-full border-b border-border/20 bg-gradient-to-b from-background/90 via-background/70 to-background/55 backdrop-blur-xl supports-[backdrop-filter]:bg-background/70 relative after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-gradient-to-r after:from-transparent after:via-primary/25 after:to-transparent">
+        <header className="sticky top-0 z-40 w-full border-b border-primary/10 bg-gradient-to-b from-background/92 via-background/78 to-background/60 backdrop-blur-xl supports-[backdrop-filter]:bg-background/75 relative after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-gradient-to-r after:from-transparent after:via-primary/30 after:to-transparent">
             <div className="container flex h-16 items-center gap-2 md:gap-3">
                 <div className="flex items-center gap-4 md:gap-8 min-w-0">
                     <HeaderLogo adminName={firstAdminName} shopNameOverride={shopNameOverride} shopLogoVersion={shopLogoVersion} />
@@ -87,13 +87,13 @@ export async function SiteHeader() {
                     {/* HeaderSearch removed as per user request */}
                 </div>
                 <div className="ml-auto flex items-center justify-end gap-2 md:gap-3">
-                    <nav className="flex items-center space-x-1 rounded-full border border-border/20 bg-muted/20 px-1.5 py-1 md:px-2">
+                    <nav className="flex items-center space-x-1 rounded-full border border-primary/12 bg-primary/5 px-1.5 py-1 md:px-2">
                         <LanguageSwitcher />
                         <ModeToggle />
                         {user ? (
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" className="relative h-8 w-8 overflow-visible rounded-full bg-background/70 hover:bg-background/90 transition-all duration-200 hover:-translate-y-0.5 hover:ring-2 hover:ring-primary/25 hover:ring-offset-2 hover:ring-offset-background">
+                                    <Button variant="ghost" className="relative h-8 w-8 overflow-visible rounded-full bg-background/70 hover:bg-background/90 transition-all duration-200 hover:-translate-y-0.5 hover:ring-2 hover:ring-primary/30 hover:ring-offset-2 hover:ring-offset-background">
                                         <HeaderUnreadBadge initialCount={unreadCount} desktopEnabled={desktopNotificationsEnabled} className="absolute -top-1 -right-1 z-10 pointer-events-none shadow-sm" />
                                         <Avatar className="relative z-0 h-8 w-8">
                                             <AvatarImage src={user.avatar_url || ''} alt={user.name || ''} />

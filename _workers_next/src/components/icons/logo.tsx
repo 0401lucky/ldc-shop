@@ -4,15 +4,24 @@ export function Logo({ className }: { className?: string }) {
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 32 32"
             fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
             className={className}
+            aria-hidden="true"
         >
-            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" fill="currentColor" fillOpacity="0.1" />
-            <line x1="3" y1="6" x2="21" y2="6" />
-            <path d="M16 10a4 4 0 0 1-8 0" />
+            <g transform="translate(16 14.5)">
+                <ellipse cx="0" cy="-6" rx="4" ry="5.2" fill="currentColor" fillOpacity="0.9" />
+                <ellipse cx="6" cy="0" rx="5.2" ry="4" fill="currentColor" fillOpacity="0.75" />
+                <ellipse cx="0" cy="6" rx="4" ry="5.2" fill="currentColor" fillOpacity="0.9" />
+                <ellipse cx="-6" cy="0" rx="5.2" ry="4" fill="currentColor" fillOpacity="0.75" />
+                <circle cx="0" cy="0" r="2" fill="currentColor" fillOpacity="0.35" />
+            </g>
+            <path
+                d="M16 20c0 2.4.5 4.2 1.6 5.8"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                fill="none"
+                opacity="0.7"
+            />
         </svg>
     )
 }

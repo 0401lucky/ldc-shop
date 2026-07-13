@@ -90,7 +90,7 @@ export function CheckInButton({
                 <Button
                     variant="outline"
                     size="sm"
-                    className="h-8 gap-2 bg-gradient-to-r from-amber-500/10 to-orange-500/10 hover:from-amber-500/20 hover:to-orange-500/20 border-amber-500/20 text-amber-600 dark:text-amber-400"
+                    className="h-8 gap-2 bg-gradient-to-r from-primary/10 to-emerald-500/10 hover:from-primary/20 hover:to-emerald-500/20 border-primary/20 text-primary"
                     onClick={handleCheckIn}
                     disabled={checkingIn}
                 >

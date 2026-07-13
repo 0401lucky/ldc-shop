@@ -3,7 +3,8 @@
 import { Box, Gift, Package, ShoppingBag } from "lucide-react"
 
 const ICONS = [Package, Box, Gift, ShoppingBag] as const
-const HUES = [270, 200, 280, 160, 45, 340] as const
+/* Nature-leaning palette: clover, mint, teal, lime, soft gold, soft rose */
+const HUES = [145, 160, 175, 120, 95, 20] as const
 
 function hash(str: string): number {
     let h = 0

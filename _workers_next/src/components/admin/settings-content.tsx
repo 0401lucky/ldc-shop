@@ -50,19 +50,19 @@ interface AdminSettingsContentProps {
 type UpdateInfo = ClientUpdateCheckResult
 
 const THEME_COLORS = [
-    { value: 'black', hue: 0, chroma: 0, preview: 'oklch(0.18 0 0)' },
-    { value: 'purple', hue: 270 },
-    { value: 'indigo', hue: 255 },
-    { value: 'blue', hue: 240 },
-    { value: 'cyan', hue: 200 },
-    { value: 'teal', hue: 170 },
-    { value: 'green', hue: 150 },
+    { value: 'green', hue: 145 }, // lucky clover default
     { value: 'lime', hue: 120 },
-    { value: 'amber', hue: 85 },
-    { value: 'orange', hue: 45 },
-    { value: 'red', hue: 25 },
-    { value: 'rose', hue: 345 },
+    { value: 'teal', hue: 170 },
+    { value: 'cyan', hue: 200 },
+    { value: 'blue', hue: 240 },
+    { value: 'indigo', hue: 255 },
+    { value: 'purple', hue: 270 },
     { value: 'pink', hue: 330 },
+    { value: 'rose', hue: 345 },
+    { value: 'red', hue: 25 },
+    { value: 'orange', hue: 45 },
+    { value: 'amber', hue: 85 },
+    { value: 'black', hue: 0, chroma: 0, preview: 'oklch(0.18 0 0)' },
 ]
 
 const SHOP_LOGO_UPLOAD_MAX_BYTES = 500 * 1024
@@ -83,7 +83,7 @@ export function AdminSettingsContent({ stats, shopName, shopDescription, shopLog
     const [savingShopFooter, setSavingShopFooter] = useState(false)
     const [currencyUnitValue, setCurrencyUnitValue] = useState(currencyUnit || '')
     const [savingCurrencyUnit, setSavingCurrencyUnit] = useState(false)
-    const [selectedTheme, setSelectedTheme] = useState(themeColor || 'purple')
+    const [selectedTheme, setSelectedTheme] = useState(themeColor || 'green')
     const [savingTheme, setSavingTheme] = useState(false)
     const [selectedThemeFont, setSelectedThemeFont] = useState<ThemeFont>((themeFont as ThemeFont) || DEFAULT_THEME_FONT)
     const [savingThemeFont, setSavingThemeFont] = useState(false)

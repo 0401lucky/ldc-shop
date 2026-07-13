@@ -1,12 +1,12 @@
 {
-    "name": "LDC Shop",
-    "short_name": "LDC",
-    "description": "High-quality virtual goods, instant delivery",
+    "name": "Lucky Shop",
+    "short_name": "Lucky",
+    "description": "Lucky charity shop — fresh green, instant delivery",
     "start_url": "/",
     "display": "standalone",
     "orientation": "portrait",
-    "theme_color": "#7c3aed",
-    "background_color": "#0a0a0b",
+    "theme_color": "#1B7A4A",
+    "background_color": "#F4FBF6",
     "icons": [
         {
             "src": "/icon.svg",

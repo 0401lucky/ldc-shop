@@ -19,7 +19,7 @@ const THEME_HUES: Record<string, number> = {
   blue: 240,
   cyan: 200,
   teal: 170,
-  green: 150,
+  green: 145, // lucky clover default
   lime: 120,
   amber: 85,
   orange: 45,
@@ -33,9 +33,11 @@ const THEME_CHROMA: Record<string, number> = {
 };
 const THEME_PRIMARY_L: Record<string, number> = {
   black: 0.2,
+  green: 0.48,
 };
 const THEME_PRIMARY_DARK_L: Record<string, number> = {
   black: 0.8,
+  green: 0.72,
 };
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -111,10 +113,10 @@ async function RootLayoutContent({
     currencyUnit = null;
     initialLocale = "en";
   }
-  const themeHue = THEME_HUES[themeColor || "purple"] || 270;
-  const themeChroma = THEME_CHROMA[themeColor || "purple"] ?? 1;
-  const themePrimaryL = THEME_PRIMARY_L[themeColor || "purple"] ?? 0.45;
-  const themePrimaryDarkL = THEME_PRIMARY_DARK_L[themeColor || "purple"] ?? 0.7;
+  const themeHue = THEME_HUES[themeColor || "green"] || 150;
+  const themeChroma = THEME_CHROMA[themeColor || "green"] ?? 1;
+  const themePrimaryL = THEME_PRIMARY_L[themeColor || "green"] ?? 0.48;
+  const themePrimaryDarkL = THEME_PRIMARY_DARK_L[themeColor || "green"] ?? 0.72;
   const themeFontStack = getThemeFontStack(themeFont);
   const themeFontStylesheetHref = getThemeFontStylesheetHref(themeFont);
 

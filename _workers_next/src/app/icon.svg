@@ -1,8 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="8" fill="black"/>
-  <g transform="translate(7, 7)" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
-    <path d="M4.5 1.5 2.25 4.5v10.5a1.5 1.5 0 0 0 1.5 1.5h10.5a1.5 1.5 0 0 0 1.5-1.5V4.5l-2.25-3Z"/>
-    <path d="M2.25 4.5h13.5"/>
-    <path d="M12 7.5a3 3 0 0 1-6 0"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none">
+  <rect width="32" height="32" rx="9" fill="#1B7A4A"/>
+  <g transform="translate(16 15)">
+    <!-- four leaves -->
+    <ellipse cx="0" cy="-6.2" rx="4.2" ry="5.4" fill="#7CFFB2" opacity="0.95"/>
+    <ellipse cx="6.2" cy="0" rx="5.4" ry="4.2" fill="#5EE9A0" opacity="0.95"/>
+    <ellipse cx="0" cy="6.2" rx="4.2" ry="5.4" fill="#7CFFB2" opacity="0.95"/>
+    <ellipse cx="-6.2" cy="0" rx="5.4" ry="4.2" fill="#5EE9A0" opacity="0.95"/>
+    <!-- center -->
+    <circle cx="0" cy="0" r="2.1" fill="#E8FFF2"/>
   </g>
+  <!-- stem -->
+  <path d="M16 20.5c0 2.2.4 3.8 1.4 5.2" stroke="#B8F5D1" stroke-width="1.6" stroke-linecap="round"/>
 </svg>

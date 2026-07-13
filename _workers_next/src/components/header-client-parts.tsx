@@ -19,8 +19,8 @@ export function HeaderLogo({ adminName, shopNameOverride, shopLogoVersion }: { a
     const logoUrl = shopLogoVersion ? `/favicon?v=${shopLogoVersion}` : "/favicon"
 
     return (
-        <Link href="/" className="flex items-center gap-2 min-w-0 group text-muted-foreground hover:text-primary transition-colors duration-200 hover:-translate-y-0.5">
-            <img src={logoUrl} alt="Logo" className="h-8 w-8 rounded-lg object-cover shadow-sm transition-all duration-300 group-hover:shadow-md" />
+        <Link href="/" className="flex items-center gap-2 min-w-0 group text-foreground/80 hover:text-primary transition-colors duration-200 hover:-translate-y-0.5">
+            <img src={logoUrl} alt="Logo" className="h-8 w-8 rounded-xl object-cover shadow-sm ring-1 ring-primary/15 transition-all duration-300 group-hover:shadow-md group-hover:shadow-primary/20 group-hover:ring-primary/30" />
             <span className="text-xs sm:text-sm font-semibold tracking-tight truncate max-w-[160px] sm:max-w-[220px] md:max-w-none">
                 {override || shopName}
             </span>

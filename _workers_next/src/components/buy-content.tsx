@@ -380,20 +380,20 @@ export function BuyContent({
     return (
         <main className="container relative py-8 md:py-16">
             <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
-                <div className="absolute left-1/2 top-[-16rem] h-[28rem] w-[70rem] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,_rgba(59,130,246,0.12),_transparent_62%)] blur-3xl dark:bg-[radial-gradient(circle,_rgba(96,165,250,0.18),_transparent_65%)]" />
+                <div className="absolute left-1/2 top-[-16rem] h-[28rem] w-[70rem] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,_rgba(34,197,94,0.14),_transparent_62%)] blur-3xl dark:bg-[radial-gradient(circle,_rgba(74,222,128,0.16),_transparent_65%)]" />
                 <div className="absolute left-[10%] top-20 h-48 w-72 rounded-full bg-primary/10 blur-3xl" />
-                <div className="absolute right-[5%] top-24 h-64 w-64 rounded-full bg-cyan-200/16 blur-3xl dark:bg-cyan-400/10" />
-                <div className="absolute inset-0 opacity-[0.025] [background-image:linear-gradient(to_right,rgba(15,23,42,0.15)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.1)_1px,transparent_1px)] [background-size:72px_72px] dark:[background-image:linear-gradient(to_right,rgba(255,255,255,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.05)_1px,transparent_1px)]" />
+                <div className="absolute right-[5%] top-24 h-64 w-64 rounded-full bg-lime-300/20 blur-3xl dark:bg-lime-400/10" />
+                <div className="absolute inset-0 opacity-[0.03] [background-image:linear-gradient(to_right,rgba(22,101,52,0.12)_1px,transparent_1px),linear-gradient(to_bottom,rgba(22,101,52,0.08)_1px,transparent_1px)] [background-size:72px_72px] dark:[background-image:linear-gradient(to_right,rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)]" />
             </div>
 
             <div className="mx-auto max-w-6xl space-y-8 md:space-y-10">
                 <section className="grid gap-8 lg:grid-cols-[minmax(0,1.06fr)_24rem] xl:grid-cols-[minmax(0,1.06fr)_27rem]">
                     <div className="space-y-6">
                         <div className="relative overflow-hidden rounded-[2rem] border border-border/40 bg-gradient-to-br from-card via-card/96 to-primary/5 shadow-[0_30px_90px_-48px_rgba(15,23,42,0.32)]">
-                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.78),_transparent_32%)] dark:bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.08),_transparent_36%)]" />
+                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.78),_transparent_32%)] dark:bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.06),_transparent_36%)]" />
                             <div className="relative space-y-6 p-5 md:space-y-8 md:p-6 lg:p-8">
                                 <div className="relative overflow-hidden rounded-[1.8rem] border border-border/20 bg-card/48 p-3 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.35)] md:p-4">
-                                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.25),_transparent_48%)] dark:bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.08),_transparent_52%)]" />
+                                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.25),_transparent_48%)] dark:bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.06),_transparent_52%)]" />
                                     <div className="relative flex aspect-[16/10] w-full items-center justify-center overflow-hidden rounded-[1.45rem] bg-card/72">
                                         {activeGalleryImage ? (
                                             <button
@@ -499,7 +499,7 @@ export function BuyContent({
 
                     <div className="space-y-4 lg:sticky lg:top-24">
                         <Card className="tech-card overflow-hidden border-border/35">
-                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.12),_transparent_36%)] dark:bg-[radial-gradient(circle_at_top_right,_rgba(96,165,250,0.14),_transparent_40%)]" />
+                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(34,197,94,0.12),_transparent_36%)] dark:bg-[radial-gradient(circle_at_top_right,_rgba(74,222,128,0.14),_transparent_40%)]" />
                             <CardContent className="relative space-y-6 p-6">
                                 {variants.length > 1 && (
                                     <div className="space-y-2">

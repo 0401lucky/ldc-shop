@@ -129,9 +129,7 @@ export function HomeContent({
         <main className="container relative overflow-hidden py-8 md:py-14">
             <AnnouncementPopup popup={announcement?.popup ?? null} />
 
-            <div className="pointer-events-none absolute inset-0 -z-10">
-                <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(59,130,246,0.12),transparent)] dark:bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(96,165,250,0.14),transparent)]" />
-            </div>
+            <div className="pointer-events-none absolute inset-0 -z-10 lucky-ambient" />
 
             {(hasAnnouncement || hasPendingOrders) && (
                 <section className="mb-5 grid gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(22rem,0.9fr)]">
@@ -142,8 +140,8 @@ export function HomeContent({
                                 !hasPendingOrders && "xl:col-span-2"
                             )}
                         >
-                            <div className="absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-primary via-primary/80 to-cyan-400/70" />
-                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.12),_transparent_34%)] dark:bg-[radial-gradient(circle_at_top_right,_rgba(96,165,250,0.12),_transparent_40%)]" />
+                            <div className="absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-primary via-emerald-500/80 to-lime-400/70" />
+                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(34,197,94,0.12),_transparent_34%)] dark:bg-[radial-gradient(circle_at_top_right,_rgba(74,222,128,0.12),_transparent_40%)]" />
                             <div className="relative pl-2">
                                 <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
                                     <Sparkles className="h-3.5 w-3.5" />
@@ -185,13 +183,19 @@ export function HomeContent({
                 </section>
             )}
 
-            <section className="relative mb-8 overflow-hidden rounded-[2rem] border border-border/40 bg-gradient-to-br from-card via-card/95 to-primary/5 shadow-[0_25px_80px_-40px_rgba(15,23,42,0.25)]">
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.75),_transparent_36%)] dark:bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.08),_transparent_36%)]" />
+            <section className="relative mb-8 overflow-hidden rounded-[2rem] border border-primary/12 bg-gradient-to-br from-card via-card/95 to-primary/8 shadow-[0_25px_80px_-40px_rgba(22,101,52,0.22)]">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.8),_transparent_36%)] dark:bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.06),_transparent_36%)]" />
+                <div className="absolute -right-8 -top-10 h-36 w-36 rounded-full bg-primary/10 blur-2xl" />
+                <div className="absolute -bottom-12 left-1/4 h-28 w-28 rounded-full bg-lime-400/10 blur-2xl" />
                 <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
                 <div className="relative px-6 py-5 md:px-8 md:py-6">
                     <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                         <div className="min-w-0 space-y-1.5">
-                            <h1 className="bg-gradient-to-r from-foreground via-foreground/75 to-foreground/45 bg-clip-text text-lg font-medium tracking-tight text-transparent sm:text-xl">
+                            <div className="mb-1 inline-flex items-center gap-1.5 rounded-full border border-primary/15 bg-primary/8 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
+                                <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+                                Lucky
+                            </div>
+                            <h1 className="bg-gradient-to-r from-foreground via-primary/80 to-emerald-600/70 dark:via-primary/90 dark:to-lime-300/70 bg-clip-text text-lg font-semibold tracking-tight text-transparent sm:text-xl">
                                 {t("home.title")}
                             </h1>
                             <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
@@ -229,7 +233,7 @@ export function HomeContent({
             </section>
 
             <section className="mb-10 space-y-4">
-                <div className="flex flex-col gap-4 rounded-[1.8rem] border border-border/40 bg-card/70 p-4 shadow-[0_20px_50px_-36px_rgba(15,23,42,0.3)] backdrop-blur-md">
+                <div className="flex flex-col gap-4 rounded-[1.8rem] border border-primary/10 bg-card/75 p-4 shadow-[0_20px_50px_-36px_rgba(22,101,52,0.18)] backdrop-blur-md">
                     <div className="grid gap-4 xl:grid-cols-[minmax(0,17rem)_minmax(0,1fr)_auto] xl:items-center">
                         <div className="relative w-full">
                             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -295,10 +299,14 @@ export function HomeContent({
 
                 {sortedProducts.length === 0 ? (
                     <div className="relative overflow-hidden rounded-[2rem] border border-dashed border-border/50 bg-muted/25 px-6 py-20 text-center">
-                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(59,130,246,0.08),_transparent_60%)] dark:bg-[radial-gradient(circle_at_center,_rgba(96,165,250,0.08),_transparent_65%)]" />
-                        <div className="relative mb-4 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-background/80 shadow-sm">
-                            <svg className="h-8 w-8 text-muted-foreground/50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(34,197,94,0.1),_transparent_60%)] dark:bg-[radial-gradient(circle_at_center,_rgba(74,222,128,0.1),_transparent_65%)]" />
+                        <div className="relative mb-4 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/8 text-primary shadow-sm ring-1 ring-primary/10">
+                            <svg className="h-8 w-8 opacity-70" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <ellipse cx="12" cy="6.5" rx="3.2" ry="4" />
+                                <ellipse cx="17.5" cy="12" rx="4" ry="3.2" />
+                                <ellipse cx="12" cy="17.5" rx="3.2" ry="4" />
+                                <ellipse cx="6.5" cy="12" rx="4" ry="3.2" />
+                                <circle cx="12" cy="12" r="1.6" fill="currentColor" opacity="0.45" />
                             </svg>
                         </div>
                         <p className="relative font-medium text-muted-foreground">{t("home.noProducts")}</p>
@@ -318,13 +326,13 @@ export function HomeContent({
                                 prefetch={false}
                                 aria-label={t("common.viewDetails")}
                                 className={cn(
-                                    "group tech-card relative flex h-full flex-col overflow-hidden rounded-[1.8rem] border border-border/35 bg-card/85 shadow-[0_20px_50px_-38px_rgba(15,23,42,0.28)] transition-all duration-300 animate-in fade-in slide-in-from-bottom-2 motion-reduce:animate-none",
+                                    "group tech-card relative flex h-full flex-col overflow-hidden rounded-[1.8rem] border border-primary/10 bg-card/90 shadow-[0_20px_50px_-38px_rgba(22,101,52,0.2)] transition-all duration-300 animate-in fade-in slide-in-from-bottom-2 motion-reduce:animate-none cursor-pointer",
                                     product.stockCount <= 0 && "opacity-90"
                                 )}
                                 style={{ animationDelay: `${index * 60}ms` }}
                             >
                                 <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-                                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.12),_transparent_32%)] opacity-80 dark:bg-[radial-gradient(circle_at_top_right,_rgba(96,165,250,0.14),_transparent_36%)]" />
+                                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(34,197,94,0.1),_transparent_32%)] opacity-80 dark:bg-[radial-gradient(circle_at_top_right,_rgba(74,222,128,0.12),_transparent_36%)]" />
 
                                 <div className="relative m-4 aspect-[4/3] overflow-hidden rounded-[1.45rem] bg-card/50">
                                     {product.image ? (
@@ -447,7 +455,7 @@ export function HomeContent({
                                                 </div>
                                             </div>
 
-                                            <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-border/40 bg-background/80 text-muted-foreground transition-transform duration-300 group-hover:border-primary/30 group-hover:text-primary group-hover:-translate-y-0.5 group-hover:translate-x-0.5">
+                                            <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-primary/15 bg-primary/8 text-primary/80 transition-all duration-300 group-hover:border-primary/35 group-hover:bg-primary group-hover:text-primary-foreground group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:shadow-md group-hover:shadow-primary/20">
                                                 <ArrowRight className="h-4.5 w-4.5" />
                                             </div>
                                         </div>

@@ -4,12 +4,12 @@ import { useEffect } from 'react'
 
 // OKLCH hue values for each theme color
 const THEME_HUES: Record<string, number> = {
-    purple: 270,  // Default
+    purple: 270,
     indigo: 255,
     blue: 240,
     cyan: 200,
     teal: 170,
-    green: 150,
+    green: 145, // lucky clover default
     lime: 120,
     amber: 85,
     orange: 45,
@@ -23,9 +23,11 @@ const THEME_CHROMA: Record<string, number> = {
 }
 const THEME_PRIMARY_L: Record<string, number> = {
     black: 0.2,
+    green: 0.48,
 }
 const THEME_PRIMARY_DARK_L: Record<string, number> = {
     black: 0.8,
+    green: 0.72,
 }
 
 interface ThemeColorProviderProps {
@@ -35,10 +37,10 @@ interface ThemeColorProviderProps {
 
 export function ThemeColorProvider({ color, children }: ThemeColorProviderProps) {
     useEffect(() => {
-        const hue = THEME_HUES[color || 'purple'] || 270
-        const chroma = THEME_CHROMA[color || 'purple'] ?? 1
-        const primaryL = THEME_PRIMARY_L[color || 'purple'] ?? 0.45
-        const primaryDarkL = THEME_PRIMARY_DARK_L[color || 'purple'] ?? 0.7
+        const hue = THEME_HUES[color || 'green'] || 145
+        const chroma = THEME_CHROMA[color || 'green'] ?? 1
+        const primaryL = THEME_PRIMARY_L[color || 'green'] ?? 0.48
+        const primaryDarkL = THEME_PRIMARY_DARK_L[color || 'green'] ?? 0.72
         const root = document.documentElement
 
         root.style.setProperty('--theme-hue', String(hue))

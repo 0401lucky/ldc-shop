@@ -69,7 +69,7 @@ export function FooterContent({ customFooter, version }: FooterContentProps) {
     }
 
     return (
-        <footer className="border-t border-border/50 py-6 pb-20 md:py-0 md:pb-0 bg-gradient-to-t from-muted/30 to-transparent">
+        <footer className="border-t border-primary/10 py-6 pb-20 md:py-0 md:pb-0 bg-gradient-to-t from-primary/5 via-muted/20 to-transparent">
             <div className="container flex flex-col items-center justify-between gap-4 md:h-20 md:flex-row">
                 <div className="flex flex-col items-center gap-4 px-8 md:flex-row md:gap-2 md:px-0">
                     <p
