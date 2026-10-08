@@ -118,7 +118,7 @@ No command line needed—everything in the Cloudflare Dashboard.
 3. Configure build settings:
    - **Path**: `_workers_next`
    - **Build command**: `npm install && npx opennextjs-cloudflare build`
-   - **Deploy command**: `npx wrangler deploy`
+   - **Deploy command**: `npm run db:migrate:remote && npx wrangler deploy`
 
 4. Click **Deploy**
 
@@ -131,8 +131,19 @@ If code is pushed but Cloudflare doesn't start a new build:
 3. Confirm changes are inside **Path = `_workers_next`** (changes outside may not trigger this project).
 4. Confirm build/deploy commands are:
    - Build: `npm install && npx opennextjs-cloudflare build`
-   - Deploy: `npx wrangler deploy`
+   - Deploy: `npm run db:migrate:remote && npx wrangler deploy`
 5. If everything looks correct, try disconnecting and reconnecting Git authorization in the Dashboard.
+
+#### Database migrations and caching
+
+Starting with schema 22, normal requests only check the database version. They no longer create tables, add columns, or backfill historical data. **Existing projects must update their Deploy command too**, so migrations finish before the new Worker is published. The migration preserves existing data, adds missing columns and the stock index, and only reads the version when rerun after completion.
+
+- Run `npm run db:migrate` in `_workers_next` to initialize local D1 at `.wrangler/state/v3`.
+- Run `npm run db:migrate:remote` for production through the D1 HTTP API, using Wrangler OAuth or a build API token with D1 write permission. Configure `account_id` or `CLOUDFLARE_ACCOUNT_ID`. This avoids remote development proxies; `npm run deploy` includes this step.
+- For a custom database, configure the correct `database_name` / `database_id` on the `DB` binding in `wrangler.json` before migrating. The migration and Worker must use the same database.
+- `npm test` uses isolated local D1 databases and never connects to production.
+
+Public display settings use a 60-second cache; the registered-user count uses a five-minute cache. Saving settings invalidates the current data center's cache; other data centers refresh within 60 seconds. This uses Workers Cache API with `NEXT_PUBLIC_APP_URL`, without additional KV/R2 bindings, and falls back to instance memory locally. Payment controls, rewards, credentials and user settings remain uncached. Order expiry still runs every minute; physical card cleanup runs every ten minutes. Stock queries always exclude expired cards, checkout cleanup only touches the current product, and empty cleanup does not write to D1.
 
 #### 3. Bind D1 Database
 

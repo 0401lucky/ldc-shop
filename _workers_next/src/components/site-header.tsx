@@ -14,15 +14,12 @@ import { SignInButton } from "@/components/signin-button"
 import { SignOutButton } from "@/components/signout-button"
 import { HeaderLogo, HeaderNav, HeaderSearch, HeaderUserMenuItems, HeaderUnreadBadge, LanguageSwitcher } from "@/components/header-client-parts"
 import { ModeToggle } from "@/components/mode-toggle"
-import { getSetting, recordLoginUser, getUserUnreadNotificationCount, getLoginUserDesktopNotificationsEnabled } from "@/lib/db/queries"
+import { getSetting, getUserUnreadNotificationCount, getLoginUserDesktopNotificationsEnabled } from "@/lib/db/queries"
 import { isRegistryEnabled } from "@/lib/registry"
 
 export async function SiteHeader() {
     const session = await auth()
     const user = session?.user
-    if (user?.id) {
-        await recordLoginUser(user.id, user.username || user.name || null, user.email || null)
-    }
 
     // Check if admin (case-insensitive)
     const rawAdminUsers = process.env.ADMIN_USERS?.split(',') || []

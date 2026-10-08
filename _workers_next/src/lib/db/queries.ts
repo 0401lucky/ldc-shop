@@ -1,857 +1,53 @@
 import { db } from "./index";
 import { products, cards, orders, settings, reviews, reviewReplies, loginUsers, categories, userNotifications, wishlistItems, wishlistVotes } from "./schema";
-import { INFINITE_STOCK, RESERVATION_TTL_MS } from "@/lib/constants";
+import { RESERVATION_TTL_MS } from "@/lib/constants";
 import { eq, sql, desc, and, asc, gte, or, inArray, lte, lt, isNull } from "drizzle-orm";
 import { updateTag, revalidatePath } from "next/cache";
 import { cache } from "react";
+import { ensureDatabaseReady } from './ready';
+import { queryCardStock, type CardStock } from './card-stock';
+import { updateProductAggregates } from './product-aggregates';
+import { createPublicCache } from '../public-cache';
 
-// Database initialization state
-let dbInitialized = false;
-let loginUsersSchemaReady = false;
-let wishlistTablesReady = false;
-const CURRENT_SCHEMA_VERSION = 21;
-type ColumnEnsureKey = 'products' | 'orders' | 'cards' | 'loginUsers';
-const columnEnsureState: Record<ColumnEnsureKey, { ready: boolean; pending: Promise<void> | null }> = {
-    products: { ready: false, pending: null },
-    orders: { ready: false, pending: null },
-    cards: { ready: false, pending: null },
-    loginUsers: { ready: false, pending: null },
-};
-const reviewRepliesEnsureState = { ready: false, pending: null as Promise<void> | null };
+// Keep payment controls, rewards, credentials and per-user keys uncached.
+const PUBLIC_SETTING_KEYS = [
+    'shop_name', 'shop_description', 'shop_footer', 'shop_logo', 'shop_logo_source',
+    'shop_logo_updated_at', 'noindex_enabled', 'theme_color', 'theme_font',
+    'currency_unit', 'announcement',
+];
+const publicSettingsCache = createPublicCache<Record<string, string | null>>('settings', 60);
+const visitorCountCache = createPublicCache<number>('visitors', 300);
 
-async function ensureColumnsOnce(key: ColumnEnsureKey, task: () => Promise<void>) {
-    const state = columnEnsureState[key];
-    if (state.ready) return;
-    if (state.pending) {
-        await state.pending;
-        return;
-    }
-    const pending = (async () => {
-        await task();
-        state.ready = true;
-    })();
-    state.pending = pending;
-    try {
-        await pending;
-    } finally {
-        state.pending = null;
-    }
+export async function invalidatePublicDataCache() {
+    await Promise.all([publicSettingsCache.invalidate(), visitorCountCache.invalidate()]);
 }
 
-async function ensureCardKeyDuplicatesAllowed() {
-    try {
-        await db.run(sql`DROP INDEX IF EXISTS cards_product_id_card_key_uq;`);
-    } catch {
-        // best effort
-    }
-}
-
-async function safeAddColumn(table: string, column: string, definition: string) {
-    try {
-        await db.run(sql.raw(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`));
-    } catch (e: any) {
-        // Ignore "duplicate column" errors in SQLite
-        // Use JSON.stringify AND String(e) to be safe across different environments
-        const errorString = (JSON.stringify(e) + String(e)).toLowerCase();
-        if (!errorString.includes('duplicate column')) throw e;
-    }
-}
-
-async function ensureIndexes() {
-    // ... existing index logic unchanged ...
-    const indexStatements = [
-        `CREATE INDEX IF NOT EXISTS products_active_sort_idx ON products(is_active, sort_order, created_at)`,
-        `CREATE INDEX IF NOT EXISTS products_stock_count_idx ON products(stock_count)`,
-        `CREATE INDEX IF NOT EXISTS products_sold_count_idx ON products(sold_count)`,
-        `CREATE INDEX IF NOT EXISTS cards_product_used_reserved_idx ON cards(product_id, is_used, reserved_at)`,
-        `CREATE INDEX IF NOT EXISTS cards_reserved_order_idx ON cards(reserved_order_id)`,
-        `CREATE INDEX IF NOT EXISTS cards_expires_at_idx ON cards(expires_at)`,
-        `CREATE INDEX IF NOT EXISTS orders_status_paid_at_idx ON orders(status, paid_at)`,
-        `CREATE INDEX IF NOT EXISTS orders_status_created_at_idx ON orders(status, created_at)`,
-        `CREATE INDEX IF NOT EXISTS orders_user_status_created_at_idx ON orders(user_id, status, created_at)`,
-        `CREATE INDEX IF NOT EXISTS orders_product_status_idx ON orders(product_id, status)`,
-        `CREATE INDEX IF NOT EXISTS reviews_product_created_at_idx ON reviews(product_id, created_at)`,
-        `CREATE INDEX IF NOT EXISTS review_replies_review_created_idx ON review_replies(review_id, created_at)`,
-        `CREATE INDEX IF NOT EXISTS refund_requests_order_id_idx ON refund_requests(order_id)`,
-        `CREATE INDEX IF NOT EXISTS user_notifications_user_created_idx ON user_notifications(user_id, created_at)`,
-        `CREATE INDEX IF NOT EXISTS user_notifications_user_read_idx ON user_notifications(user_id, is_read, created_at)`,
-        `CREATE INDEX IF NOT EXISTS admin_messages_created_idx ON admin_messages(created_at)`,
-        `CREATE INDEX IF NOT EXISTS user_messages_read_created_idx ON user_messages(is_read, created_at)`,
-        `CREATE INDEX IF NOT EXISTS user_messages_user_created_idx ON user_messages(user_id, created_at)`,
-        `CREATE INDEX IF NOT EXISTS broadcast_messages_created_idx ON broadcast_messages(created_at)`,
-        `CREATE UNIQUE INDEX IF NOT EXISTS broadcast_reads_message_user_uq ON broadcast_reads(message_id, user_id)`,
-        `CREATE INDEX IF NOT EXISTS broadcast_reads_user_idx ON broadcast_reads(user_id, created_at)`,
-        `CREATE INDEX IF NOT EXISTS wishlist_items_created_idx ON wishlist_items(created_at)`,
-        `CREATE INDEX IF NOT EXISTS wishlist_votes_item_idx ON wishlist_votes(item_id, created_at)`,
-        `CREATE UNIQUE INDEX IF NOT EXISTS wishlist_votes_item_user_uq ON wishlist_votes(item_id, user_id)`,
-        `CREATE UNIQUE INDEX IF NOT EXISTS login_users_github_username_uq ON login_users(lower(username)) WHERE username IS NOT NULL AND lower(username) LIKE 'gh_%'`,
-    ];
-
-    // ... rest of ensureIndexes ...
-    try {
-        await db.run(sql`
-            DELETE FROM broadcast_reads 
-            WHERE id NOT IN (
-                SELECT MIN(id) 
-                FROM broadcast_reads 
-                GROUP BY message_id, user_id
-            )
-        `);
-    } catch {
-    }
-
-    for (const statement of indexStatements) {
-        try {
-            await db.run(sql.raw(statement));
-        } catch (e: any) {
-            const errorString = (JSON.stringify(e) + String(e) + (e?.message || '')).toLowerCase();
-            if (errorString.includes('no such table') || errorString.includes('does not exist')) {
-                continue;
-            }
-            if (errorString.includes('already exists') || errorString.includes('constraint failed')) {
-                continue;
-            }
-            throw e;
-        }
-    }
-}
-
-async function ensureReviewRepliesTable() {
-    if (reviewRepliesEnsureState.ready) return;
-    if (reviewRepliesEnsureState.pending) {
-        await reviewRepliesEnsureState.pending;
-        return;
-    }
-
-    const pending = (async () => {
-        try {
-            await db.run(sql`
-                CREATE TABLE IF NOT EXISTS review_replies (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    review_id INTEGER NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
-                    user_id TEXT NOT NULL,
-                    username TEXT NOT NULL,
-                    comment TEXT NOT NULL,
-                    created_at INTEGER DEFAULT (unixepoch() * 1000)
-                )
-            `)
-            reviewRepliesEnsureState.ready = true;
-        } catch {
-            // best effort
-        }
-    })();
-
-    reviewRepliesEnsureState.pending = pending;
-    try {
-        await pending;
-    } finally {
-        reviewRepliesEnsureState.pending = null;
-    }
-}
-
-// Auto-initialize database on first query
-async function ensureDatabaseInitialized() {
-    if (dbInitialized) return;
-
-    try {
-        // OPTIMIZATION: Check schema version first to avoid heavy DDL checks
-        try {
-            const version = await getSetting('schema_version');
-            const parsedVersion = Number.parseInt(String(version || '').trim(), 10);
-            if (
-                version === String(CURRENT_SCHEMA_VERSION) ||
-                (Number.isFinite(parsedVersion) && parsedVersion >= CURRENT_SCHEMA_VERSION)
-            ) {
-                dbInitialized = true;
-                return;
-            }
-            if (CURRENT_SCHEMA_VERSION === 21 && parsedVersion === 20) {
-                await ensureProductsColumns();
-                await setSetting('schema_version', String(CURRENT_SCHEMA_VERSION));
-                dbInitialized = true;
-                return;
-            }
-        } catch (e) {
-            // Settings table likely doesn't exist, proceed to full checks
-        }
-
-        // Quick check if products table exists
-        await db.run(sql`SELECT 1 FROM products LIMIT 1`);
-
-        // IMPORTANT: Even if table exists, ensure columns exist!
-        await ensureProductsColumns();
-        await ensureOrdersColumns();
-        await ensureCardsColumns();
-        await ensureCardKeyDuplicatesAllowed();
-        await ensureLoginUsersTable();
-        await ensureLoginUsersColumns(); // Add this call
-        loginUsersSchemaReady = true;
-        await ensureUserNotificationsTable();
-        await ensureAdminMessagesTable();
-        await ensureUserMessagesTable();
-        await ensureBroadcastTables();
-        await ensureWishlistTables();
-        await migrateTimestampColumnsToMs();
-        await migrateMalformedGitHubUserIds();
-        await migrateGitHubUsersDedupAndCanonicalize();
-        await ensureIndexes();
-        await backfillProductAggregates();
-
-        // Update schema version
-        await setSetting('schema_version', String(CURRENT_SCHEMA_VERSION));
-
-        dbInitialized = true;
-        return;
-    } catch {
-        // Table doesn't exist, initialize database
-    }
-    // ...
-
-
-    console.log("First run detected, initializing database...");
-
-    await db.run(sql`
-        -- Products table
-        CREATE TABLE IF NOT EXISTS products (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT,
-            price TEXT NOT NULL,
-            compare_at_price TEXT,
-            max_points_discount TEXT,
-            category TEXT,
-            image TEXT,
-            product_images TEXT,
-            is_hot INTEGER DEFAULT 0,
-            is_active INTEGER DEFAULT 1,
-            is_shared INTEGER DEFAULT 0,
-            sort_order INTEGER DEFAULT 0,
-            purchase_limit INTEGER,
-            purchase_warning TEXT,
-            visibility_level INTEGER DEFAULT -1,
-            stock_count INTEGER DEFAULT 0,
-            locked_count INTEGER DEFAULT 0,
-            sold_count INTEGER DEFAULT 0,
-            created_at INTEGER DEFAULT (unixepoch() * 1000),
-            variant_group_id TEXT,
-            variant_label TEXT
-        );
-        
-        -- Cards (stock) table
-        CREATE TABLE IF NOT EXISTS cards (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-            card_key TEXT NOT NULL,
-            is_used INTEGER DEFAULT 0,
-            reserved_order_id TEXT,
-            reserved_at INTEGER,
-            expires_at INTEGER,
-            used_at INTEGER,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-        
-        -- Orders table
-        CREATE TABLE IF NOT EXISTS orders (
-            order_id TEXT PRIMARY KEY,
-            product_id TEXT NOT NULL,
-            product_name TEXT NOT NULL,
-            amount TEXT NOT NULL,
-            email TEXT,
-            payee TEXT,
-            status TEXT DEFAULT 'pending',
-            trade_no TEXT,
-            card_key TEXT,
-            card_ids TEXT,
-            paid_at INTEGER,
-            delivered_at INTEGER,
-            user_id TEXT,
-            username TEXT,
-            points_used INTEGER DEFAULT 0,
-            quantity INTEGER DEFAULT 1,
-            current_payment_id TEXT,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-        
-        -- Login users table
-        CREATE TABLE IF NOT EXISTS login_users (
-            user_id TEXT PRIMARY KEY,
-            username TEXT,
-            points INTEGER DEFAULT 0,
-            is_blocked INTEGER DEFAULT 0,
-            desktop_notifications_enabled INTEGER DEFAULT 0,
-            created_at INTEGER DEFAULT (unixepoch() * 1000),
-            last_login_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-        
-        -- Daily checkins table
-        CREATE TABLE IF NOT EXISTS daily_checkins_v2 (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL REFERENCES login_users(user_id) ON DELETE CASCADE,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-        
-        -- Settings table
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT,
-            updated_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-        
-        -- Categories table
-        CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            icon TEXT,
-            sort_order INTEGER DEFAULT 0,
-            created_at INTEGER DEFAULT (unixepoch() * 1000),
-            updated_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS categories_name_uq ON categories(name);
-        
-        -- Reviews table
-        CREATE TABLE IF NOT EXISTS reviews (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-            order_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            username TEXT NOT NULL,
-            rating INTEGER NOT NULL,
-            comment TEXT,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-
-        CREATE TABLE IF NOT EXISTS review_replies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            review_id INTEGER NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
-            user_id TEXT NOT NULL,
-            username TEXT NOT NULL,
-            comment TEXT NOT NULL,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-        
-        -- Refund requests table
-        CREATE TABLE IF NOT EXISTS refund_requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            order_id TEXT NOT NULL,
-            user_id TEXT,
-            username TEXT,
-            reason TEXT,
-            status TEXT DEFAULT 'pending',
-            admin_username TEXT,
-            admin_note TEXT,
-            created_at INTEGER DEFAULT (unixepoch() * 1000),
-            updated_at INTEGER DEFAULT (unixepoch() * 1000),
-            processed_at INTEGER
-        );
-
-        -- User notifications table
-        CREATE TABLE IF NOT EXISTS user_notifications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL REFERENCES login_users(user_id) ON DELETE CASCADE,
-            type TEXT NOT NULL,
-            title_key TEXT NOT NULL,
-            content_key TEXT NOT NULL,
-            data TEXT,
-            is_read INTEGER DEFAULT 0,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-
-        -- Admin messages table
-        CREATE TABLE IF NOT EXISTS admin_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            target_type TEXT NOT NULL,
-            target_value TEXT,
-            title TEXT NOT NULL,
-            body TEXT NOT NULL,
-            sender TEXT,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-
-        -- User messages table
-        CREATE TABLE IF NOT EXISTS user_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL REFERENCES login_users(user_id) ON DELETE CASCADE,
-            username TEXT,
-            title TEXT NOT NULL,
-            body TEXT NOT NULL,
-            is_read INTEGER DEFAULT 0,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-
-        -- Broadcast messages
-        CREATE TABLE IF NOT EXISTS broadcast_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            body TEXT NOT NULL,
-            sender TEXT,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-
-        -- Broadcast read receipts
-        CREATE TABLE IF NOT EXISTS broadcast_reads (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            message_id INTEGER NOT NULL REFERENCES broadcast_messages(id) ON DELETE CASCADE,
-            user_id TEXT NOT NULL REFERENCES login_users(user_id) ON DELETE CASCADE,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-
-        -- Wishlist items
-        CREATE TABLE IF NOT EXISTS wishlist_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            description TEXT,
-            user_id TEXT,
-            username TEXT,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-
-        -- Wishlist votes
-        CREATE TABLE IF NOT EXISTS wishlist_votes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_id INTEGER NOT NULL REFERENCES wishlist_items(id) ON DELETE CASCADE,
-            user_id TEXT NOT NULL REFERENCES login_users(user_id) ON DELETE CASCADE,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-
-        CREATE UNIQUE INDEX IF NOT EXISTS wishlist_votes_item_user_uq ON wishlist_votes(item_id, user_id);
-    `);
-
-    await migrateTimestampColumnsToMs();
-    await migrateMalformedGitHubUserIds();
-    await migrateGitHubUsersDedupAndCanonicalize();
-    await ensureIndexes();
-    await backfillProductAggregates();
-
-    // Set initial schema version
-    try {
-        await setSetting('schema_version', String(CURRENT_SCHEMA_VERSION));
-    } catch {
-        // If setSetting failed (e.g. settings table issue), try to ensure it exists and retry
-        await ensureSettingsTable();
-        await setSetting('schema_version', String(CURRENT_SCHEMA_VERSION));
-    }
-
-    dbInitialized = true;
-    console.log("Database initialized successfully");
-}
-
-async function ensureProductsColumns() {
-    await ensureColumnsOnce('products', async () => {
-        await safeAddColumn('products', 'compare_at_price', 'TEXT');
-        await safeAddColumn('products', 'max_points_discount', 'TEXT');
-        await safeAddColumn('products', 'is_hot', 'INTEGER DEFAULT 0');
-        await safeAddColumn('products', 'purchase_warning', 'TEXT');
-        await safeAddColumn('products', 'is_shared', 'INTEGER DEFAULT 0');
-        await safeAddColumn('products', 'visibility_level', 'INTEGER DEFAULT -1');
-        await safeAddColumn('products', 'stock_count', 'INTEGER DEFAULT 0');
-        await safeAddColumn('products', 'locked_count', 'INTEGER DEFAULT 0');
-        await safeAddColumn('products', 'sold_count', 'INTEGER DEFAULT 0');
-        await safeAddColumn('products', 'rating', 'REAL DEFAULT 0');
-        await safeAddColumn('products', 'review_count', 'INTEGER DEFAULT 0');
-        await safeAddColumn('products', 'variant_group_id', 'TEXT');
-        await safeAddColumn('products', 'variant_label', 'TEXT');
-        await safeAddColumn('products', 'purchase_questions', 'TEXT');
-        await safeAddColumn('products', 'product_images', 'TEXT');
-    });
-}
-
-async function ensureOrdersColumns() {
-    await ensureColumnsOnce('orders', async () => {
-        await safeAddColumn('orders', 'points_used', 'INTEGER DEFAULT 0 NOT NULL');
-        await safeAddColumn('orders', 'current_payment_id', 'TEXT');
-        await safeAddColumn('orders', 'payee', 'TEXT');
-        await safeAddColumn('orders', 'card_ids', 'TEXT');
-    });
-}
-
-async function ensureCardsColumns() {
-    await ensureColumnsOnce('cards', async () => {
-        await safeAddColumn('cards', 'reserved_order_id', 'TEXT');
-        await safeAddColumn('cards', 'reserved_at', 'INTEGER');
-        await safeAddColumn('cards', 'expires_at', 'INTEGER');
-    });
-}
-
-async function ensureLoginUsersColumns() {
-    await ensureColumnsOnce('loginUsers', async () => {
-        await safeAddColumn('login_users', 'last_checkin_at', 'INTEGER');
-        await safeAddColumn('login_users', 'consecutive_days', 'INTEGER DEFAULT 0');
-        await safeAddColumn('login_users', 'desktop_notifications_enabled', 'INTEGER DEFAULT 0');
-    });
-}
-
-export async function ensureLoginUsersSchema() {
-    if (loginUsersSchemaReady) return;
-    await ensureLoginUsersTable();
-    await ensureLoginUsersColumns();
-    await safeAddColumn('login_users', 'email', 'TEXT');
-    await safeAddColumn('login_users', 'points', 'INTEGER DEFAULT 0 NOT NULL');
-    await safeAddColumn('login_users', 'is_blocked', 'INTEGER DEFAULT 0');
-    await safeAddColumn('login_users', 'desktop_notifications_enabled', 'INTEGER DEFAULT 0');
-    loginUsersSchemaReady = true;
-}
-
-async function isProductAggregatesBackfilled(): Promise<boolean> {
-    try {
-        const result = await db.select({ value: settings.value })
-            .from(settings)
-            .where(eq(settings.key, 'product_aggregates_backfilled_v2'));
-        return result[0]?.value === '1';
-    } catch (error: any) {
-        if (isMissingTable(error)) {
-            await ensureSettingsTable();
-            return false;
-        }
-        throw error;
-    }
-}
-
-async function markProductAggregatesBackfilled() {
-    await db.insert(settings).values({
-        key: 'product_aggregates_backfilled_v2',
-        value: '1',
-        updatedAt: new Date()
-    }).onConflictDoUpdate({
-        target: settings.key,
-        set: { value: '1', updatedAt: new Date() }
-    });
-}
+export { ensureDatabaseReady as ensureLoginUsersSchema } from './ready';
 
 export async function recalcProductAggregates(productId: string) {
-    const pid = (productId || '').trim();
-    if (!pid) return;
-
-    try {
-        await ensureProductsColumns();
-        await ensureCardsColumns();
-    } catch (error: any) {
-        if (isMissingTableOrColumn(error)) return;
-        throw error;
-    }
-
-    const product = await db.query.products.findFirst({
-        where: eq(products.id, pid),
-        columns: { isShared: true }
-    });
-    if (!product) return;
-
-    const nowMs = Date.now();
-    const fiveMinutesAgo = nowMs - RESERVATION_TTL_MS;
-    let unusedCount = 0;
-    let availableCount = 0;
-    let lockedCount = 0;
-
-    try {
-        const cardRows = await db.select({
-            unused: sql<number>`COALESCE(SUM(CASE WHEN COALESCE(${cards.isUsed}, 0) = 0 AND (${cards.expiresAt} IS NULL OR ${cards.expiresAt} > ${nowMs}) THEN 1 ELSE 0 END), 0)`,
-            available: sql<number>`COALESCE(SUM(CASE WHEN COALESCE(${cards.isUsed}, 0) = 0 AND (${cards.expiresAt} IS NULL OR ${cards.expiresAt} > ${nowMs}) AND (${cards.reservedAt} IS NULL OR ${cards.reservedAt} < ${fiveMinutesAgo}) THEN 1 ELSE 0 END), 0)`,
-            locked: sql<number>`COALESCE(SUM(CASE WHEN COALESCE(${cards.isUsed}, 0) = 0 AND (${cards.expiresAt} IS NULL OR ${cards.expiresAt} > ${nowMs}) AND ${cards.reservedAt} IS NOT NULL AND ${cards.reservedAt} >= ${fiveMinutesAgo} THEN 1 ELSE 0 END), 0)`
-        })
-            .from(cards)
-            .where(eq(cards.productId, pid));
-
-        const row = cardRows[0];
-        unusedCount = Number(row?.unused || 0);
-        availableCount = Number(row?.available || 0);
-        lockedCount = Number(row?.locked || 0);
-    } catch (error: any) {
-        if (!isMissingTableOrColumn(error)) throw error;
-    }
-
-    let soldCount = 0;
-    try {
-        const soldRows = await db.select({
-            total: sql<number>`COALESCE(SUM(CASE WHEN ${orders.status} IN ('paid', 'delivered') THEN ${orders.quantity} ELSE 0 END), 0)`
-        })
-            .from(orders)
-            .where(eq(orders.productId, pid));
-        soldCount = Number(soldRows[0]?.total || 0);
-    } catch (error: any) {
-        if (!isMissingTableOrColumn(error)) throw error;
-    }
-
-    let rating = 0;
-    let reviewCount = 0;
-    try {
-        const reviewRows = await db.select({
-            avg: sql<number>`COALESCE(AVG(${reviews.rating}), 0)`,
-            count: sql<number>`COUNT(*)`
-        })
-            .from(reviews)
-            .where(eq(reviews.productId, pid));
-        rating = Number(reviewRows[0]?.avg || 0);
-        reviewCount = Number(reviewRows[0]?.count || 0);
-    } catch (error: any) {
-        if (!isMissingTableOrColumn(error)) throw error;
-    }
-
-    const stockCount = product.isShared ? (unusedCount > 0 ? INFINITE_STOCK : 0) : availableCount;
-
-    await db.update(products)
-        .set({
-            stockCount,
-            lockedCount,
-            soldCount,
-            rating,
-            reviewCount
-        })
-        .where(eq(products.id, pid));
+    await ensureDatabaseReady();
+    await updateProductAggregates(db, [productId]);
 }
 
 export async function recalcProductAggregatesForMany(productIds: string[]) {
-    const ids = Array.from(new Set((productIds || []).map((id) => String(id).trim()).filter(Boolean)));
-    if (!ids.length) return;
-
-    try {
-        await ensureProductsColumns();
-        await ensureCardsColumns();
-    } catch (error: any) {
-        if (isMissingTableOrColumn(error)) return;
-        throw error;
-    }
-
-    const QUERY_BATCH_SIZE = 50;
-    const UPDATE_BATCH_SIZE = 8;
-    const nowMs = Date.now();
-    const fiveMinutesAgo = nowMs - RESERVATION_TTL_MS;
-
-    const aggregates = new Map<string, {
-        isShared: boolean;
-        unused: number;
-        available: number;
-        locked: number;
-        sold: number;
-        rating: number;
-        reviewCount: number;
-    }>();
-
-    for (let i = 0; i < ids.length; i += QUERY_BATCH_SIZE) {
-        const batch = ids.slice(i, i + QUERY_BATCH_SIZE);
-        const rows = await db.select({ id: products.id, isShared: products.isShared })
-            .from(products)
-            .where(inArray(products.id, batch));
-        for (const row of rows) {
-            aggregates.set(row.id, {
-                isShared: !!row.isShared,
-                unused: 0,
-                available: 0,
-                locked: 0,
-                sold: 0,
-                rating: 0,
-                reviewCount: 0
-            });
-        }
-    }
-
-    const existingIds = Array.from(aggregates.keys());
-    if (!existingIds.length) return;
-
-    try {
-        for (let i = 0; i < existingIds.length; i += QUERY_BATCH_SIZE) {
-            const batch = existingIds.slice(i, i + QUERY_BATCH_SIZE);
-            const cardRows = await db.select({
-                productId: cards.productId,
-                unused: sql<number>`COALESCE(SUM(CASE WHEN COALESCE(${cards.isUsed}, 0) = 0 AND (${cards.expiresAt} IS NULL OR ${cards.expiresAt} > ${nowMs}) THEN 1 ELSE 0 END), 0)`,
-                available: sql<number>`COALESCE(SUM(CASE WHEN COALESCE(${cards.isUsed}, 0) = 0 AND (${cards.expiresAt} IS NULL OR ${cards.expiresAt} > ${nowMs}) AND (${cards.reservedAt} IS NULL OR ${cards.reservedAt} < ${fiveMinutesAgo}) THEN 1 ELSE 0 END), 0)`,
-                locked: sql<number>`COALESCE(SUM(CASE WHEN COALESCE(${cards.isUsed}, 0) = 0 AND (${cards.expiresAt} IS NULL OR ${cards.expiresAt} > ${nowMs}) AND ${cards.reservedAt} IS NOT NULL AND ${cards.reservedAt} >= ${fiveMinutesAgo} THEN 1 ELSE 0 END), 0)`
-            })
-                .from(cards)
-                .where(inArray(cards.productId, batch))
-                .groupBy(cards.productId);
-
-            for (const row of cardRows) {
-                const agg = aggregates.get(row.productId);
-                if (!agg) continue;
-                agg.unused = Number(row.unused || 0);
-                agg.available = Number(row.available || 0);
-                agg.locked = Number(row.locked || 0);
-            }
-        }
-    } catch (error: any) {
-        if (!isMissingTableOrColumn(error)) throw error;
-    }
-
-    try {
-        for (let i = 0; i < existingIds.length; i += QUERY_BATCH_SIZE) {
-            const batch = existingIds.slice(i, i + QUERY_BATCH_SIZE);
-            const soldRows = await db.select({
-                productId: orders.productId,
-                total: sql<number>`COALESCE(SUM(CASE WHEN ${orders.status} IN ('paid', 'delivered') THEN ${orders.quantity} ELSE 0 END), 0)`
-            })
-                .from(orders)
-                .where(inArray(orders.productId, batch))
-                .groupBy(orders.productId);
-
-            for (const row of soldRows) {
-                const agg = aggregates.get(row.productId);
-                if (!agg) continue;
-                agg.sold = Number(row.total || 0);
-            }
-        }
-    } catch (error: any) {
-        if (!isMissingTableOrColumn(error)) throw error;
-    }
-
-    try {
-        for (let i = 0; i < existingIds.length; i += QUERY_BATCH_SIZE) {
-            const batch = existingIds.slice(i, i + QUERY_BATCH_SIZE);
-            const reviewRows = await db.select({
-                productId: reviews.productId,
-                avg: sql<number>`COALESCE(AVG(${reviews.rating}), 0)`,
-                count: sql<number>`COUNT(*)`
-            })
-                .from(reviews)
-                .where(inArray(reviews.productId, batch))
-                .groupBy(reviews.productId);
-
-            for (const row of reviewRows) {
-                const agg = aggregates.get(row.productId);
-                if (!agg) continue;
-                agg.rating = Number(row.avg || 0);
-                agg.reviewCount = Number(row.count || 0);
-            }
-        }
-    } catch (error: any) {
-        if (!isMissingTableOrColumn(error)) throw error;
-    }
-
-    const updates = existingIds.map((id) => {
-        const agg = aggregates.get(id)!;
-        const stockCount = agg.isShared ? (agg.unused > 0 ? INFINITE_STOCK : 0) : agg.available;
-        return {
-            id,
-            stockCount,
-            lockedCount: agg.locked,
-            soldCount: agg.sold,
-            rating: agg.rating,
-            reviewCount: agg.reviewCount
-        };
-    });
-
-    for (let i = 0; i < updates.length; i += UPDATE_BATCH_SIZE) {
-        const batch = updates.slice(i, i + UPDATE_BATCH_SIZE);
-        const idsBatch = batch.map((row) => row.id);
-        const stockCases = sql.join(
-            batch.map((row) => sql`WHEN ${products.id} = ${row.id} THEN ${row.stockCount}`),
-            sql` `
-        );
-        const lockedCases = sql.join(
-            batch.map((row) => sql`WHEN ${products.id} = ${row.id} THEN ${row.lockedCount}`),
-            sql` `
-        );
-        const soldCases = sql.join(
-            batch.map((row) => sql`WHEN ${products.id} = ${row.id} THEN ${row.soldCount}`),
-            sql` `
-        );
-        const ratingCases = sql.join(
-            batch.map((row) => sql`WHEN ${products.id} = ${row.id} THEN ${row.rating}`),
-            sql` `
-        );
-        const reviewCases = sql.join(
-            batch.map((row) => sql`WHEN ${products.id} = ${row.id} THEN ${row.reviewCount}`),
-            sql` `
-        );
-
-        await db.run(sql`
-            UPDATE products
-            SET
-                stock_count = CASE ${products.id} ${stockCases} ELSE ${products.stockCount} END,
-                locked_count = CASE ${products.id} ${lockedCases} ELSE ${products.lockedCount} END,
-                sold_count = CASE ${products.id} ${soldCases} ELSE ${products.soldCount} END,
-                rating = CASE ${products.id} ${ratingCases} ELSE ${products.rating} END,
-                review_count = CASE ${products.id} ${reviewCases} ELSE ${products.reviewCount} END
-            WHERE ${inArray(products.id, idsBatch)}
-        `);
-    }
+    await ensureDatabaseReady();
+    await updateProductAggregates(db, productIds);
 }
 
-export async function getLiveCardStats(productIds: string[]): Promise<Map<string, { unused: number; available: number; locked: number }>> {
-    const ids = Array.from(new Set((productIds || []).map((id) => String(id).trim()).filter(Boolean)));
-    const stats = new Map<string, { unused: number; available: number; locked: number }>();
-    if (!ids.length) return stats;
-
-    for (const id of ids) {
-        stats.set(id, { unused: 0, available: 0, locked: 0 });
-    }
-
-    try {
-        await ensureCardsColumns();
-    } catch (error: any) {
-        if (isMissingTableOrColumn(error)) return stats;
-        throw error;
-    }
-
-    const nowMs = Date.now();
-    const fiveMinutesAgo = nowMs - RESERVATION_TTL_MS;
-
-    try {
-        const rows = await db.select({
-            productId: cards.productId,
-            unused: sql<number>`COALESCE(SUM(CASE WHEN COALESCE(${cards.isUsed}, 0) = 0 AND (${cards.expiresAt} IS NULL OR ${cards.expiresAt} > ${nowMs}) THEN 1 ELSE 0 END), 0)`,
-            available: sql<number>`COALESCE(SUM(CASE WHEN COALESCE(${cards.isUsed}, 0) = 0 AND (${cards.expiresAt} IS NULL OR ${cards.expiresAt} > ${nowMs}) AND (${cards.reservedAt} IS NULL OR ${cards.reservedAt} < ${fiveMinutesAgo}) THEN 1 ELSE 0 END), 0)`,
-            locked: sql<number>`COALESCE(SUM(CASE WHEN COALESCE(${cards.isUsed}, 0) = 0 AND (${cards.expiresAt} IS NULL OR ${cards.expiresAt} > ${nowMs}) AND ${cards.reservedAt} IS NOT NULL AND ${cards.reservedAt} >= ${fiveMinutesAgo} THEN 1 ELSE 0 END), 0)`
-        })
-            .from(cards)
-            .where(inArray(cards.productId, ids))
-            .groupBy(cards.productId);
-
-        for (const row of rows) {
-            if (!row.productId) continue;
-            stats.set(row.productId, {
-                unused: Number(row.unused || 0),
-                available: Number(row.available || 0),
-                locked: Number(row.locked || 0),
-            });
-        }
-    } catch (error: any) {
-        if (!isMissingTableOrColumn(error)) throw error;
-    }
-
-    return stats;
-}
-
-async function backfillProductAggregates() {
-    const already = await isProductAggregatesBackfilled();
-    if (already) return;
-
-    try {
-        await ensureProductsColumns();
-        const rows = await db.select({ id: products.id }).from(products);
-        await recalcProductAggregatesForMany(rows.map((row) => row.id));
-        await markProductAggregatesBackfilled();
-    } catch (error: any) {
-        if (!isMissingTableOrColumn(error)) throw error;
-    }
+export async function getLiveCardStats(productIds: string[]) {
+    if (!productIds.length) return new Map<string, CardStock>();
+    await ensureDatabaseReady();
+    return queryCardStock(db, productIds);
 }
 
 async function withProductColumnFallback<T>(fn: () => Promise<T>): Promise<T> {
-    try {
-        return await fn()
-    } catch (error: any) {
-        // Use more robust string conversion for error checking
-        const errorString = (JSON.stringify(error) + String(error) + (error?.message || '')).toLowerCase();
-
-        // Check for missing column errors (PostgreSQL: 42703, SQLite/D1: no such column, D1_COLUMN_NOTFOUND)
-        if (errorString.includes('42703') || errorString.includes('no such column') || errorString.includes('column not found') || errorString.includes('d1_column_notfound')) {
-            console.log("Detected missing column error, attempting remediation...");
-            await ensureProductsColumns();
-            return await fn();
-        }
-        throw error;
-    }
+    await ensureDatabaseReady();
+    return fn();
 }
 
 export async function withOrderColumnFallback<T>(fn: () => Promise<T>): Promise<T> {
-    await ensureDatabaseInitialized()
-    try {
-        return await fn()
-    } catch (error: any) {
-        if (isMissingTableOrColumn(error)) {
-            await ensureOrdersColumns()
-            return await fn()
-        }
-        throw error
-    }
+    await ensureDatabaseReady();
+    return fn();
 }
 
 export async function getProducts() {
@@ -896,8 +92,8 @@ function visibilityCondition(isLoggedIn?: boolean, trustLevel?: number | null) {
 
 // Get only active products (for home page); groups by variant_group_id and returns one representative per group with variantCount and priceRange
 export async function getActiveProducts(options?: { isLoggedIn?: boolean; trustLevel?: number | null }) {
-    // Auto-initialize database on first access
-    await ensureDatabaseInitialized();
+    // Verify deployment migrations before querying
+    await ensureDatabaseReady();
 
     const rows = await withProductColumnFallback(async () => {
         return await db.select({
@@ -996,7 +192,7 @@ function groupProductsAsVariants<T extends {
 }
 
 export async function getWishlistItems(userId: string | null, limit = 10) {
-    await ensureDatabaseInitialized();
+    await ensureDatabaseReady();
 
     try {
         const result: any = await db.run(sql`
@@ -1027,7 +223,7 @@ export async function getWishlistItems(userId: string | null, limit = 10) {
         }));
     } catch (error: any) {
         if (isMissingTableOrColumn(error)) {
-            await ensureWishlistTables();
+            await ensureDatabaseReady();
             // Retry once
             try {
                 const result: any = await db.run(sql`
@@ -1271,6 +467,15 @@ export async function getRecentOrders(limit: number = 10) {
 
 // Settings
 export const getSetting = cache(async (key: string): Promise<string | null> => {
+    await ensureDatabaseReady();
+    if (PUBLIC_SETTING_KEYS.includes(key)) {
+        const values = await publicSettingsCache.get(async () => {
+            const rows = await db.select({ key: settings.key, value: settings.value })
+                .from(settings).where(inArray(settings.key, PUBLIC_SETTING_KEYS));
+            return Object.fromEntries(rows.map(row => [row.key, row.value]));
+        });
+        return values[key] ?? null;
+    }
     const result = await db.select({ value: settings.value })
         .from(settings)
         .where(eq(settings.key, key));
@@ -1286,7 +491,7 @@ export const getAllSettings = cache(async (): Promise<Record<string, string>> =>
         }, {} as Record<string, string>);
     } catch (error: any) {
         if (isMissingTable(error)) {
-            await ensureSettingsTable();
+            await ensureDatabaseReady();
             return {};
         }
         throw error;
@@ -1294,28 +499,18 @@ export const getAllSettings = cache(async (): Promise<Record<string, string>> =>
 });
 
 export async function setSetting(key: string, value: string): Promise<void> {
+    await ensureDatabaseReady();
     await db.insert(settings)
         .values({ key, value, updatedAt: new Date() })
         .onConflictDoUpdate({
             target: settings.key,
             set: { value, updatedAt: new Date() }
         });
+    if (PUBLIC_SETTING_KEYS.includes(key)) await publicSettingsCache.invalidate();
 }
 
-// Categories (best-effort; table created on demand)
-async function ensureCategoriesTable() {
-    await db.run(sql`
-        CREATE TABLE IF NOT EXISTS categories(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        icon TEXT,
-        sort_order INTEGER DEFAULT 0,
-        created_at INTEGER DEFAULT (unixepoch() * 1000),
-        updated_at INTEGER DEFAULT (unixepoch() * 1000)
-    );
-        CREATE UNIQUE INDEX IF NOT EXISTS categories_name_uq ON categories(name);
-    `)
-}
+// Categories
+
 
 export async function getCategories(): Promise<Array<{ id: number; name: string; icon: string | null; sortOrder: number }>> {
     try {
@@ -1328,7 +523,7 @@ export async function getCategories(): Promise<Array<{ id: number; name: string;
         return rows
     } catch (error: any) {
         if (isMissingTable(error)) {
-            await ensureCategoriesTable()
+            await ensureDatabaseReady()
             return []
         }
         throw error
@@ -1343,7 +538,7 @@ export async function createUserNotification(params: {
     data?: Record<string, any> | null
 }) {
     if (!params.userId) return
-    await ensureDatabaseInitialized()
+    await ensureDatabaseReady()
     try {
         await db.insert(userNotifications).values({
             userId: params.userId,
@@ -1356,7 +551,7 @@ export async function createUserNotification(params: {
         })
     } catch (error: any) {
         if (isMissingTable(error)) {
-            await ensureUserNotificationsTable()
+            await ensureDatabaseReady()
             await db.insert(userNotifications).values({
                 userId: params.userId,
                 type: params.type,
@@ -1373,7 +568,7 @@ export async function createUserNotification(params: {
 }
 
 export async function getUserNotifications(userId: string, limit: number = 20) {
-    await ensureDatabaseInitialized()
+    await ensureDatabaseReady()
     try {
         return await db.select({
             id: userNotifications.id,
@@ -1391,7 +586,7 @@ export async function getUserNotifications(userId: string, limit: number = 20) {
             .limit(limit)
     } catch (error: any) {
         if (isMissingTable(error)) {
-            await ensureUserNotificationsTable()
+            await ensureDatabaseReady()
             return []
         }
         throw error
@@ -1399,14 +594,14 @@ export async function getUserNotifications(userId: string, limit: number = 20) {
 }
 
 export async function markAllUserNotificationsRead(userId: string) {
-    await ensureDatabaseInitialized()
+    await ensureDatabaseReady()
     try {
         await db.update(userNotifications)
             .set({ isRead: true })
             .where(eq(userNotifications.userId, userId))
     } catch (error: any) {
         if (isMissingTable(error)) {
-            await ensureUserNotificationsTable()
+            await ensureDatabaseReady()
             return
         }
         throw error
@@ -1414,7 +609,7 @@ export async function markAllUserNotificationsRead(userId: string) {
 }
 
 export async function getUserUnreadNotificationCount(userId: string) {
-    await ensureDatabaseInitialized()
+    await ensureDatabaseReady()
     try {
         const rows = await db.select({
             count: sql<number>`count(*)`
@@ -1424,7 +619,7 @@ export async function getUserUnreadNotificationCount(userId: string) {
         return Number(rows[0]?.count || 0)
     } catch (error: any) {
         if (isMissingTable(error)) {
-            await ensureUserNotificationsTable()
+            await ensureDatabaseReady()
             return 0
         }
         throw error
@@ -1432,14 +627,14 @@ export async function getUserUnreadNotificationCount(userId: string) {
 }
 
 export async function markUserNotificationRead(userId: string, id: number) {
-    await ensureDatabaseInitialized()
+    await ensureDatabaseReady()
     try {
         await db.update(userNotifications)
             .set({ isRead: true })
             .where(and(eq(userNotifications.userId, userId), eq(userNotifications.id, id)))
     } catch (error: any) {
         if (isMissingTable(error)) {
-            await ensureUserNotificationsTable()
+            await ensureDatabaseReady()
             return
         }
         throw error
@@ -1447,13 +642,13 @@ export async function markUserNotificationRead(userId: string, id: number) {
 }
 
 export async function clearUserNotifications(userId: string) {
-    await ensureDatabaseInitialized()
+    await ensureDatabaseReady()
     try {
         await db.delete(userNotifications)
             .where(eq(userNotifications.userId, userId))
     } catch (error: any) {
         if (isMissingTable(error)) {
-            await ensureUserNotificationsTable()
+            await ensureDatabaseReady()
             return
         }
         throw error
@@ -1553,7 +748,7 @@ export async function searchActiveProducts(params: {
 }
 
 export async function getActiveProductCategories(options?: { isLoggedIn?: boolean; trustLevel?: number | null }): Promise<string[]> {
-    await ensureDatabaseInitialized();
+    await ensureDatabaseReady();
     try {
         const rows = await db
             .select({ category: products.category })
@@ -1575,7 +770,7 @@ export async function getActiveProductCategories(options?: { isLoggedIn?: boolea
 
 // Reviews
 export async function getProductReviews(productId: string) {
-    await ensureReviewRepliesTable()
+    await ensureDatabaseReady()
     const reviewRows = await db.select()
         .from(reviews)
         .where(eq(reviews.productId, productId))
@@ -1672,7 +867,7 @@ export async function createReviewReply(data: {
     username: string;
     comment: string;
 }) {
-    await ensureReviewRepliesTable()
+    await ensureDatabaseReady()
     return await db.insert(reviewReplies).values({
         ...data,
         createdAt: new Date(),
@@ -1759,214 +954,6 @@ export function normalizeTimestampMs(column: any) {
     return sql<number>`CASE WHEN ${column} < ${TIMESTAMP_MS_THRESHOLD} THEN ${column} * 1000 ELSE ${column} END`
 }
 
-async function migrateTimestampColumnsToMs() {
-    const tableColumns = [
-        { table: 'products', columns: ['created_at'] },
-        { table: 'cards', columns: ['reserved_at', 'used_at', 'created_at'] },
-        { table: 'orders', columns: ['paid_at', 'delivered_at', 'created_at'] },
-        { table: 'login_users', columns: ['created_at', 'last_login_at'] },
-        { table: 'daily_checkins_v2', columns: ['created_at'] },
-        { table: 'settings', columns: ['updated_at'] },
-        { table: 'reviews', columns: ['created_at'] },
-        { table: 'review_replies', columns: ['created_at'] },
-        { table: 'categories', columns: ['created_at', 'updated_at'] },
-        { table: 'refund_requests', columns: ['created_at', 'updated_at', 'processed_at'] },
-        { table: 'user_notifications', columns: ['created_at'] },
-        { table: 'admin_messages', columns: ['created_at'] },
-        { table: 'user_messages', columns: ['created_at'] },
-        { table: 'broadcast_messages', columns: ['created_at'] },
-        { table: 'broadcast_reads', columns: ['created_at'] },
-        { table: 'wishlist_items', columns: ['created_at'] },
-        { table: 'wishlist_votes', columns: ['created_at'] },
-    ];
-
-    for (const { table, columns } of tableColumns) {
-        for (const column of columns) {
-            try {
-                await db.run(sql.raw(
-                    `UPDATE ${table} SET ${column} = ${column} * 1000 WHERE ${column} IS NOT NULL AND ${column} < ${TIMESTAMP_MS_THRESHOLD}`
-                ));
-            } catch (error: any) {
-                if (!isMissingTableOrColumn(error)) throw error;
-            }
-        }
-    }
-}
-
-async function ensureLoginUsersTable() {
-    await db.run(sql`
-        CREATE TABLE IF NOT EXISTS login_users(
-        user_id TEXT PRIMARY KEY,
-        username TEXT,
-        email TEXT,
-        points INTEGER DEFAULT 0 NOT NULL,
-        is_blocked BOOLEAN DEFAULT FALSE,
-        desktop_notifications_enabled INTEGER DEFAULT 0,
-        created_at INTEGER DEFAULT (unixepoch() * 1000),
-        last_login_at INTEGER DEFAULT (unixepoch() * 1000)
-    )
-        `);
-}
-
-async function ensureSettingsTable() {
-    await db.run(sql`
-        CREATE TABLE IF NOT EXISTS settings(
-            key TEXT PRIMARY KEY,
-            value TEXT,
-            updated_at INTEGER DEFAULT (unixepoch() * 1000)
-        )
-        `);
-}
-
-async function ensureUserNotificationsTable() {
-    await db.run(sql`
-        CREATE TABLE IF NOT EXISTS user_notifications(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL REFERENCES login_users(user_id) ON DELETE CASCADE,
-            type TEXT NOT NULL,
-            title_key TEXT NOT NULL,
-            content_key TEXT NOT NULL,
-            data TEXT,
-            is_read INTEGER DEFAULT 0,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        )
-    `);
-}
-
-async function ensureAdminMessagesTable() {
-    await db.run(sql`
-        CREATE TABLE IF NOT EXISTS admin_messages(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            target_type TEXT NOT NULL,
-            target_value TEXT,
-            title TEXT NOT NULL,
-            body TEXT NOT NULL,
-            sender TEXT,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        )
-    `);
-}
-
-async function ensureUserMessagesTable() {
-    await db.run(sql`
-        CREATE TABLE IF NOT EXISTS user_messages(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL REFERENCES login_users(user_id) ON DELETE CASCADE,
-            username TEXT,
-            title TEXT NOT NULL,
-            body TEXT NOT NULL,
-            is_read INTEGER DEFAULT 0,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        )
-    `);
-}
-
-async function ensureBroadcastTables() {
-    await db.run(sql`
-        CREATE TABLE IF NOT EXISTS broadcast_messages(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            body TEXT NOT NULL,
-            sender TEXT,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-        CREATE TABLE IF NOT EXISTS broadcast_reads(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            message_id INTEGER NOT NULL REFERENCES broadcast_messages(id) ON DELETE CASCADE,
-            user_id TEXT NOT NULL REFERENCES login_users(user_id) ON DELETE CASCADE,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-    `);
-
-    await ensureCardKeyDuplicatesAllowed();
-}
-
-async function ensureWishlistTables() {
-    if (wishlistTablesReady) return;
-    await db.run(sql`
-        CREATE TABLE IF NOT EXISTS wishlist_items(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            description TEXT,
-            user_id TEXT,
-            username TEXT,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-        CREATE TABLE IF NOT EXISTS wishlist_votes(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_id INTEGER NOT NULL REFERENCES wishlist_items(id) ON DELETE CASCADE,
-            user_id TEXT NOT NULL REFERENCES login_users(user_id) ON DELETE CASCADE,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS wishlist_votes_item_user_uq ON wishlist_votes(item_id, user_id);
-    `);
-
-    await ensureWishlistColumns();
-    wishlistTablesReady = true;
-}
-
-async function ensureWishlistColumns() {
-    await safeAddColumn('wishlist_items', 'description', 'TEXT');
-    await safeAddColumn('wishlist_items', 'user_id', 'TEXT');
-    await safeAddColumn('wishlist_items', 'username', 'TEXT');
-    await safeAddColumn('wishlist_items', 'created_at', 'INTEGER');
-    await safeAddColumn('wishlist_votes', 'created_at', 'INTEGER');
-}
-
-type GitHubLoginUserRow = {
-    userId: string
-    username: string | null
-    email: string | null
-    points: number
-    isBlocked: boolean
-    desktopNotificationsEnabled: boolean
-    createdAt: Date | null
-    lastLoginAt: Date | null
-}
-
-function toEpochMs(value: Date | number | string | null | undefined): number | null {
-    if (value === null || value === undefined) return null
-    if (value instanceof Date) return value.getTime()
-    if (typeof value === 'number') return Number.isFinite(value) ? value : null
-    const parsed = Number(value)
-    return Number.isFinite(parsed) ? parsed : null
-}
-
-function pickCanonicalGitHubUser(rows: GitHubLoginUserRow[]) {
-    const byRecentLoginDesc = [...rows].sort((a, b) => {
-        const bTime = toEpochMs(b.lastLoginAt) || 0
-        const aTime = toEpochMs(a.lastLoginAt) || 0
-        if (bTime !== aTime) return bTime - aTime
-        const aCreated = toEpochMs(a.createdAt) || 0
-        const bCreated = toEpochMs(b.createdAt) || 0
-        return aCreated - bCreated
-    })
-
-    const stableProviderId = byRecentLoginDesc.find((row) => /^github:\d+$/i.test(row.userId))
-    if (stableProviderId) return stableProviderId
-
-    const githubScoped = byRecentLoginDesc.find((row) => row.userId.toLowerCase().startsWith('github:'))
-    if (githubScoped) return githubScoped
-
-    return byRecentLoginDesc[0]
-}
-
-function normalizeGitHubUserIdValue(userId?: string | null): string | null {
-    if (!userId) return null
-    let normalized = userId.trim()
-    while (normalized.toLowerCase().startsWith('github:')) {
-        normalized = normalized.slice('github:'.length)
-    }
-    if (!normalized) return null
-    return `github:${normalized}`
-}
-
-function normalizeGitHubUsernameValue(username?: string | null): string | null {
-    if (!username) return null
-    const normalized = username.trim().toLowerCase()
-    if (!normalized) return null
-    return normalized
-}
 
 function isInvalidGitHubPlaceholderUser(userId?: string | null, username?: string | null) {
     const normalizedUserId = (userId || '').trim().toLowerCase()
@@ -1982,400 +969,19 @@ function isInvalidGitHubPlaceholderUser(userId?: string | null, username?: strin
     )
 }
 
-function mergeLoginUserRows(primary: GitHubLoginUserRow, secondary: GitHubLoginUserRow) {
-    const createdCandidates = [toEpochMs(primary.createdAt), toEpochMs(secondary.createdAt)].filter((value): value is number => value !== null)
-    const lastLoginCandidates = [toEpochMs(primary.lastLoginAt), toEpochMs(secondary.lastLoginAt)].filter((value): value is number => value !== null)
-
-    return {
-        username: normalizeGitHubUsernameValue(primary.username) || normalizeGitHubUsernameValue(secondary.username),
-        email: primary.email || secondary.email || null,
-        points: Number(primary.points || 0) + Number(secondary.points || 0),
-        isBlocked: !!primary.isBlocked || !!secondary.isBlocked,
-        desktopNotificationsEnabled: !!primary.desktopNotificationsEnabled || !!secondary.desktopNotificationsEnabled,
-        createdAt: createdCandidates.length ? new Date(Math.min(...createdCandidates)) : new Date(),
-        lastLoginAt: lastLoginCandidates.length ? new Date(Math.max(...lastLoginCandidates)) : new Date(),
-    }
-}
-
-async function runMigrationQuery(statement: any) {
-    try {
-        await db.run(statement)
-    } catch (error: any) {
-        if (!isMissingTableOrColumn(error)) throw error
-    }
-}
-
-async function moveUserReferences(sourceUserId: string, targetUserId: string) {
-    if (!sourceUserId || !targetUserId || sourceUserId === targetUserId) return
-
-    await runMigrationQuery(sql`
-        DELETE FROM broadcast_reads
-        WHERE user_id = ${sourceUserId}
-          AND EXISTS (
-            SELECT 1
-            FROM broadcast_reads br
-            WHERE br.message_id = broadcast_reads.message_id
-              AND br.user_id = ${targetUserId}
-          )
-    `)
-
-    await runMigrationQuery(sql`
-        DELETE FROM wishlist_votes
-        WHERE user_id = ${sourceUserId}
-          AND EXISTS (
-            SELECT 1
-            FROM wishlist_votes wv
-            WHERE wv.item_id = wishlist_votes.item_id
-              AND wv.user_id = ${targetUserId}
-          )
-    `)
-
-    await runMigrationQuery(sql`UPDATE orders SET user_id = ${targetUserId} WHERE user_id = ${sourceUserId}`)
-    await runMigrationQuery(sql`UPDATE reviews SET user_id = ${targetUserId} WHERE user_id = ${sourceUserId}`)
-    await runMigrationQuery(sql`UPDATE refund_requests SET user_id = ${targetUserId} WHERE user_id = ${sourceUserId}`)
-    await runMigrationQuery(sql`UPDATE daily_checkins_v2 SET user_id = ${targetUserId} WHERE user_id = ${sourceUserId}`)
-    await runMigrationQuery(sql`UPDATE user_notifications SET user_id = ${targetUserId} WHERE user_id = ${sourceUserId}`)
-    await runMigrationQuery(sql`UPDATE user_messages SET user_id = ${targetUserId} WHERE user_id = ${sourceUserId}`)
-    await runMigrationQuery(sql`UPDATE broadcast_reads SET user_id = ${targetUserId} WHERE user_id = ${sourceUserId}`)
-    await runMigrationQuery(sql`UPDATE wishlist_votes SET user_id = ${targetUserId} WHERE user_id = ${sourceUserId}`)
-    await runMigrationQuery(sql`UPDATE wishlist_items SET user_id = ${targetUserId} WHERE user_id = ${sourceUserId}`)
-    await runMigrationQuery(sql`UPDATE admin_messages SET target_value = ${targetUserId} WHERE target_type = 'userId' AND target_value = ${sourceUserId}`)
-    await runMigrationQuery(sql`DELETE FROM login_users WHERE user_id = ${sourceUserId}`)
-}
-
-async function migrateMalformedGitHubUserIds() {
-    await ensureLoginUsersSchema()
-
-    const malformedRows = await db.select({
-        userId: loginUsers.userId,
-        username: loginUsers.username,
-        email: loginUsers.email,
-        points: loginUsers.points,
-        isBlocked: sql<boolean>`COALESCE(${loginUsers.isBlocked}, FALSE)`,
-        desktopNotificationsEnabled: sql<boolean>`COALESCE(${loginUsers.desktopNotificationsEnabled}, FALSE)`,
-        createdAt: loginUsers.createdAt,
-        lastLoginAt: loginUsers.lastLoginAt,
-    })
-        .from(loginUsers)
-        .where(sql`LOWER(${loginUsers.userId}) LIKE 'github:github:%'`)
-
-    if (!malformedRows.length) return
-
-    for (const row of malformedRows) {
-        const sourceUser: GitHubLoginUserRow = {
-            userId: row.userId,
-            username: row.username || null,
-            email: row.email || null,
-            points: Number(row.points || 0),
-            isBlocked: !!row.isBlocked,
-            desktopNotificationsEnabled: !!row.desktopNotificationsEnabled,
-            createdAt: row.createdAt || null,
-            lastLoginAt: row.lastLoginAt || null,
-        }
-
-        const targetUserId = normalizeGitHubUserIdValue(sourceUser.userId)
-        if (!targetUserId || targetUserId === sourceUser.userId) continue
-
-        const existingTargetRows = await db.select({
-            userId: loginUsers.userId,
-            username: loginUsers.username,
-            email: loginUsers.email,
-            points: loginUsers.points,
-            isBlocked: sql<boolean>`COALESCE(${loginUsers.isBlocked}, FALSE)`,
-            desktopNotificationsEnabled: sql<boolean>`COALESCE(${loginUsers.desktopNotificationsEnabled}, FALSE)`,
-            createdAt: loginUsers.createdAt,
-            lastLoginAt: loginUsers.lastLoginAt,
-        })
-            .from(loginUsers)
-            .where(eq(loginUsers.userId, targetUserId))
-            .limit(1)
-
-        const existingTarget = existingTargetRows[0]
-            ? {
-                userId: existingTargetRows[0].userId,
-                username: existingTargetRows[0].username || null,
-                email: existingTargetRows[0].email || null,
-                points: Number(existingTargetRows[0].points || 0),
-                isBlocked: !!existingTargetRows[0].isBlocked,
-                desktopNotificationsEnabled: !!existingTargetRows[0].desktopNotificationsEnabled,
-                createdAt: existingTargetRows[0].createdAt || null,
-                lastLoginAt: existingTargetRows[0].lastLoginAt || null,
-            } satisfies GitHubLoginUserRow
-            : null
-
-        if (!existingTarget) {
-            const createdAtMs = toEpochMs(sourceUser.createdAt) || Date.now()
-            const lastLoginAtMs = toEpochMs(sourceUser.lastLoginAt) || Date.now()
-            await runMigrationQuery(sql`
-                INSERT OR IGNORE INTO login_users (
-                    user_id,
-                    username,
-                    email,
-                    points,
-                    is_blocked,
-                    desktop_notifications_enabled,
-                    created_at,
-                    last_login_at
-                ) VALUES (
-                    ${targetUserId},
-                    NULL,
-                    ${sourceUser.email},
-                    ${sourceUser.points},
-                    ${sourceUser.isBlocked ? 1 : 0},
-                    ${sourceUser.desktopNotificationsEnabled ? 1 : 0},
-                    ${createdAtMs},
-                    ${lastLoginAtMs}
-                )
-            `)
-        } else {
-            const merged = mergeLoginUserRows(existingTarget, sourceUser)
-            await db.update(loginUsers)
-                .set({
-                    username: merged.username,
-                    email: merged.email,
-                    points: merged.points,
-                    isBlocked: merged.isBlocked,
-                    desktopNotificationsEnabled: merged.desktopNotificationsEnabled,
-                    createdAt: merged.createdAt,
-                    lastLoginAt: merged.lastLoginAt,
-                })
-                .where(eq(loginUsers.userId, targetUserId))
-        }
-
-        await moveUserReferences(sourceUser.userId, targetUserId)
-
-        const normalizedUsername = normalizeGitHubUsernameValue(sourceUser.username)
-        if (normalizedUsername) {
-            await runMigrationQuery(sql`
-                UPDATE login_users
-                SET username = ${normalizedUsername}
-                WHERE user_id = ${targetUserId}
-                  AND (username IS NULL OR username = '' OR LOWER(username) <> ${normalizedUsername})
-            `)
-        }
-    }
-}
-
-async function migrateGitHubUsersDedupAndCanonicalize() {
-    await ensureLoginUsersSchema()
-
-    const githubUsers = await db.select({
-        userId: loginUsers.userId,
-        username: loginUsers.username,
-        email: loginUsers.email,
-        points: loginUsers.points,
-        isBlocked: sql<boolean>`COALESCE(${loginUsers.isBlocked}, FALSE)`,
-        desktopNotificationsEnabled: sql<boolean>`COALESCE(${loginUsers.desktopNotificationsEnabled}, FALSE)`,
-        createdAt: loginUsers.createdAt,
-        lastLoginAt: loginUsers.lastLoginAt,
-    })
-        .from(loginUsers)
-        .where(sql`${loginUsers.username} IS NOT NULL AND LOWER(${loginUsers.username}) LIKE 'gh_%'`)
-
-    if (!githubUsers.length) return
-
-    const groups = new Map<string, GitHubLoginUserRow[]>()
-    for (const row of githubUsers) {
-        const normalizedUsername = (row.username || '').trim().toLowerCase()
-        if (!normalizedUsername.startsWith('gh_')) continue
-        const list = groups.get(normalizedUsername) || []
-        list.push({
-            userId: row.userId,
-            username: row.username,
-            email: row.email || null,
-            points: Number(row.points || 0),
-            isBlocked: !!row.isBlocked,
-            desktopNotificationsEnabled: !!row.desktopNotificationsEnabled,
-            createdAt: row.createdAt || null,
-            lastLoginAt: row.lastLoginAt || null,
-        })
-        groups.set(normalizedUsername, list)
-    }
-
-    for (const [normalizedUsername, rows] of groups.entries()) {
-        if (!rows.length) continue
-        const canonical = pickCanonicalGitHubUser(rows)
-        if (!canonical) continue
-
-        const mergedPoints = rows.reduce((sum, row) => sum + Number(row.points || 0), 0)
-        const mergedBlocked = rows.some((row) => row.isBlocked)
-        const mergedDesktopNotifications = rows.some((row) => row.desktopNotificationsEnabled)
-        const mergedEmail = canonical.email || rows.map((row) => row.email).find((value) => !!value) || null
-
-        const createdCandidates = rows.map((row) => toEpochMs(row.createdAt)).filter((value): value is number => value !== null)
-        const lastLoginCandidates = rows.map((row) => toEpochMs(row.lastLoginAt)).filter((value): value is number => value !== null)
-
-        const mergedCreatedAt = createdCandidates.length
-            ? new Date(Math.min(...createdCandidates))
-            : (canonical.createdAt || new Date())
-        const mergedLastLoginAt = lastLoginCandidates.length
-            ? new Date(Math.max(...lastLoginCandidates))
-            : (canonical.lastLoginAt || new Date())
-
-        await db.update(loginUsers)
-            .set({
-                username: normalizedUsername,
-                email: mergedEmail,
-                points: mergedPoints,
-                isBlocked: mergedBlocked,
-                desktopNotificationsEnabled: mergedDesktopNotifications,
-                createdAt: mergedCreatedAt,
-                lastLoginAt: mergedLastLoginAt,
-            })
-            .where(eq(loginUsers.userId, canonical.userId))
-
-        await runMigrationQuery(sql`
-            UPDATE orders
-            SET username = ${normalizedUsername}
-            WHERE user_id = ${canonical.userId}
-              AND (username IS NULL OR LOWER(username) NOT LIKE 'gh_%')
-        `)
-        await runMigrationQuery(sql`
-            UPDATE reviews
-            SET username = ${normalizedUsername}
-            WHERE user_id = ${canonical.userId}
-              AND (username IS NULL OR LOWER(username) NOT LIKE 'gh_%')
-        `)
-        await runMigrationQuery(sql`
-            UPDATE refund_requests
-            SET username = ${normalizedUsername}
-            WHERE user_id = ${canonical.userId}
-              AND (username IS NULL OR LOWER(username) NOT LIKE 'gh_%')
-        `)
-        await runMigrationQuery(sql`
-            UPDATE user_messages
-            SET username = ${normalizedUsername}
-            WHERE user_id = ${canonical.userId}
-              AND (username IS NULL OR LOWER(username) NOT LIKE 'gh_%')
-        `)
-        await runMigrationQuery(sql`
-            UPDATE wishlist_items
-            SET username = ${normalizedUsername}
-            WHERE user_id = ${canonical.userId}
-              AND (username IS NULL OR LOWER(username) NOT LIKE 'gh_%')
-        `)
-
-        for (const row of rows) {
-            if (row.userId === canonical.userId) continue
-            await moveUserReferences(row.userId, canonical.userId)
-        }
-    }
-}
-
-async function isLoginUsersBackfilled(): Promise<boolean> {
-    try {
-        const result = await db.select({ value: settings.value })
-            .from(settings)
-            .where(eq(settings.key, 'login_users_backfilled'));
-        return result[0]?.value === '1';
-    } catch (error: any) {
-        if (isMissingTable(error)) {
-            await ensureSettingsTable();
-            return false;
-        }
-        throw error;
-    }
-}
-
-async function markLoginUsersBackfilled() {
-    await db.insert(settings).values({
-        key: 'login_users_backfilled',
-        value: '1',
-        updatedAt: new Date()
-    }).onConflictDoUpdate({
-        target: settings.key,
-        set: { value: '1', updatedAt: new Date() }
-    });
-}
-
-async function backfillLoginUsersFromOrdersAndReviews() {
-    const alreadyBackfilled = await isLoginUsersBackfilled();
-    if (alreadyBackfilled) return;
-
-    await ensureLoginUsersTable();
-
-    try {
-        await db.run(sql`
-            INSERT INTO login_users(user_id, username, created_at, last_login_at)
-            SELECT user_id, MAX(username) AS username, (unixepoch() * 1000), (unixepoch() * 1000)
-            FROM (
-                SELECT user_id, username FROM orders WHERE user_id IS NOT NULL AND user_id <> ''
-                UNION ALL
-                SELECT user_id, username FROM reviews WHERE user_id IS NOT NULL AND user_id <> ''
-            )
-            GROUP BY user_id
-            ON CONFLICT(user_id) DO NOTHING
-        `);
-    } catch (error: any) {
-        if (isMissingTable(error)) return;
-        throw error;
-    }
-
-    await markLoginUsersBackfilled();
-}
-
 export async function recordLoginUser(userId: string, username?: string | null, email?: string | null) {
-    if (!userId) return;
-    if (isInvalidGitHubPlaceholderUser(userId, username)) {
-        console.warn("recordLoginUser skipped invalid GitHub placeholder user", { userId, username })
-        return;
-    }
-
-    try {
-        const result = await db.insert(loginUsers).values({
-            userId,
+    if (!userId || isInvalidGitHubPlaceholderUser(userId, username)) return;
+    await ensureDatabaseReady();
+    await db.insert(loginUsers).values({
+        userId, username: username || null, email: email || null, lastLoginAt: new Date(),
+    }).onConflictDoUpdate({
+        target: loginUsers.userId,
+        set: {
             username: username || null,
-            email: email || null,
-            lastLoginAt: new Date()
-        }).onConflictDoUpdate({
-            target: loginUsers.userId,
-            set: { username: username || null, lastLoginAt: new Date() }
-        });
-        if ((result as any)?.meta?.changes === 1) {
-            try {
-                updateTag('home:visitors');
-            } catch {
-                // best effort
-            }
-        }
-        if (email) {
-            try {
-                await db.run(sql`UPDATE login_users SET email = ${email} WHERE user_id = ${userId} AND (email IS NULL OR email = '')`);
-            } catch {
-                // best effort
-            }
-        }
-    } catch (error: any) {
-        if (isMissingTable(error) || error?.code === '42703' || error?.message?.includes('column')) {
-            await ensureLoginUsersSchema();
-
-            const result = await db.insert(loginUsers).values({
-                userId,
-                username: username || null,
-                email: email || null,
-                lastLoginAt: new Date()
-            }).onConflictDoUpdate({
-                target: loginUsers.userId,
-                set: { username: username || null, lastLoginAt: new Date() }
-            });
-            if ((result as any)?.meta?.changes === 1) {
-                try {
-                    updateTag('home:visitors');
-                } catch {
-                    // best effort
-                }
-            }
-            if (email) {
-                try {
-                    await db.run(sql`UPDATE login_users SET email = ${email} WHERE user_id = ${userId} AND (email IS NULL OR email = '')`);
-                } catch {
-                    // best effort
-                }
-            }
-            return;
-        }
-        console.error('recordLoginUser error:', error);
-    }
+            lastLoginAt: new Date(),
+            email: sql`CASE WHEN ${loginUsers.email} IS NULL OR ${loginUsers.email} = '' THEN ${email || null} ELSE ${loginUsers.email} END`,
+        },
+    });
 }
 
 export async function getLoginUserEmail(userId: string): Promise<string | null> {
@@ -2395,8 +1001,7 @@ export async function getLoginUserEmail(userId: string): Promise<string | null> 
 export async function updateLoginUserEmail(userId: string, email: string | null) {
     if (!userId) return;
     try {
-        await ensureLoginUsersTable();
-        await safeAddColumn('login_users', 'email', 'TEXT');
+        await ensureDatabaseReady();
         await db.update(loginUsers)
             .set({ email: email || null, lastLoginAt: new Date() })
             .where(eq(loginUsers.userId, userId));
@@ -2423,7 +1028,7 @@ export async function getLoginUserDesktopNotificationsEnabled(userId: string): P
 export async function updateLoginUserDesktopNotificationsEnabled(userId: string, enabled: boolean) {
     if (!userId) return;
     try {
-        await ensureLoginUsersSchema();
+        await ensureDatabaseReady();
         await db.update(loginUsers)
             .set({ desktopNotificationsEnabled: enabled, lastLoginAt: new Date() })
             .where(eq(loginUsers.userId, userId));
@@ -2433,91 +1038,39 @@ export async function updateLoginUserDesktopNotificationsEnabled(userId: string,
     }
 }
 
+let lastGlobalCardCleanupAt = 0;
+
 export async function cleanupExpiredCardsIfNeeded(throttleMs: number = 10 * 60 * 1000, productId?: string) {
     const now = Date.now();
-    try {
-        await ensureCardsColumns();
-    } catch (error: any) {
-        if (!isMissingTableOrColumn(error)) throw error;
+    if (!productId && now - lastGlobalCardCleanupAt < throttleMs) return false;
+    await ensureDatabaseReady();
+    const condition = and(
+        sql`${cards.expiresAt} IS NOT NULL AND ${cards.expiresAt} < ${now}`,
+        productId ? eq(cards.productId, productId) : undefined,
+    );
+    const rows = await db.selectDistinct({ productId: cards.productId }).from(cards).where(condition);
+    if (!rows.length) {
+        if (!productId) lastGlobalCardCleanupAt = now;
         return false;
     }
-
-    if (productId) {
-        try {
-            const hasExpired = await db.select({ id: cards.id })
-                .from(cards)
-                .where(and(
-                    eq(cards.productId, productId),
-                    sql`${cards.expiresAt} IS NOT NULL AND ${cards.expiresAt} < ${now}`
-                ))
-                .limit(1);
-            if (hasExpired.length > 0) {
-                throttleMs = 0;
-            }
-        } catch (error: any) {
-            if (!isMissingTableOrColumn(error)) throw error;
-        }
-    }
-
-    let lastRun = 0;
+    await db.delete(cards).where(condition);
+    await recalcProductAggregatesForMany(rows.map(row => row.productId));
+    if (!productId) lastGlobalCardCleanupAt = now;
     try {
-        const last = await getSetting('cards_expiry_cleanup_at');
-        lastRun = Number(last || 0);
+        updateTag('home:products');
+        updateTag('home:product-categories');
     } catch {
-        // best effort
+        // Cron runs outside Server Actions.
     }
-
-    if (now - lastRun < throttleMs) return false;
-
-    let affectedProductIds: string[] = [];
-    try {
-        const rows = await db.select({ productId: cards.productId })
-            .from(cards)
-            .where(sql`${cards.expiresAt} IS NOT NULL AND ${cards.expiresAt} < ${now}`);
-        affectedProductIds = Array.from(new Set(rows.map((r) => r.productId).filter(Boolean)));
-    } catch (error: any) {
-        if (!isMissingTableOrColumn(error)) throw error;
-    }
-
-    try {
-        await db.run(sql`DELETE FROM cards WHERE expires_at IS NOT NULL AND expires_at < ${now}`);
-    } catch (error: any) {
-        if (!isMissingTableOrColumn(error)) throw error;
-    }
-
-    if (affectedProductIds.length > 0) {
-        try {
-            await recalcProductAggregatesForMany(affectedProductIds);
-        } catch {
-            // best effort
-        }
-        try {
-            updateTag('home:products');
-            updateTag('home:product-categories');
-        } catch {
-            // best effort
-        }
-    }
-
-    try {
-        await setSetting('cards_expiry_cleanup_at', String(now));
-    } catch {
-        // best effort
-    }
-
     return true;
 }
 
 export async function getVisitorCount(): Promise<number> {
-    try {
-        await backfillLoginUsersFromOrdersAndReviews();
-        const result = await db.select({ count: sql<number>`count(*)` })
-            .from(loginUsers);
-        return result[0]?.count || 0;
-    } catch (error: any) {
-        if (isMissingTable(error)) return 0;
-        throw error;
-    }
+    return visitorCountCache.get(async () => {
+        await ensureDatabaseReady();
+        const result = await db.select({ count: sql<number>`count(*)` }).from(loginUsers);
+        return Number(result[0]?.count || 0);
+    });
 }
 
 export async function cancelExpiredOrders(filters: { productId?: string; userId?: string; orderId?: string } = {}) {
@@ -2527,8 +1080,8 @@ export async function cancelExpiredOrders(filters: { productId?: string; userId?
 
     try {
         await Promise.all([
-            ensureOrdersColumns(),
-            ensureCardsColumns(),
+            ensureDatabaseReady(),
+            ensureDatabaseReady(),
         ])
     } catch (error: any) {
         if (!isMissingTableOrColumn(error)) throw error
@@ -2607,8 +1160,7 @@ export async function getUsers(page = 1, pageSize = 20, q = '') {
     const search = q.trim()
 
     try {
-        await backfillLoginUsersFromOrdersAndReviews();
-        await ensureLoginUsersTable();
+        await ensureDatabaseReady();
 
         let whereClause = undefined
         if (search) {
@@ -2657,18 +1209,14 @@ export async function getUsers(page = 1, pageSize = 20, q = '') {
 }
 
 export async function updateUserPoints(userId: string, points: number) {
-    await ensureLoginUsersTable();
+    await ensureDatabaseReady();
     await db.update(loginUsers)
         .set({ points })
         .where(eq(loginUsers.userId, userId));
 }
 
 export async function toggleUserBlock(userId: string, isBlocked: boolean) {
-    await ensureLoginUsersTable();
-    // Ensure column exists
-    try {
-        await db.run(sql.raw(`ALTER TABLE login_users ADD COLUMN is_blocked INTEGER DEFAULT 0`));
-    } catch { /* duplicate column */ }
+    await ensureDatabaseReady();
 
     await db.update(loginUsers)
         .set({ isBlocked })

@@ -1,8 +1,17 @@
 {
-    "name": "ldc-shop-next",
+    "name": "ldc-shop",
+    "account_id": "bc18b21e052806e28d3063d4ad9870cb",
     "main": "worker-entry.mjs",
     "keep_names": true,
     "keep_vars": true,
+    "workers_dev": true,
+    "preview_urls": true,
+    "routes": [
+        {
+            "pattern": "lucky.204152.xyz",
+            "custom_domain": true
+        }
+    ],
     "compatibility_date": "2025-11-12",
     "compatibility_flags": [
         "nodejs_compat"
@@ -14,7 +23,8 @@
     "d1_databases": [
         {
             "binding": "DB",
-            "database_name": "ldc-shop-next"
+            "database_name": "ldc-shop-next",
+            "database_id": "c47c1a4c-5569-48a4-b1a8-a4900faf0e02"
         }
     ],
     "triggers": {

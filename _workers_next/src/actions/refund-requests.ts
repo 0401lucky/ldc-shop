@@ -1,4 +1,5 @@
 'use server'
+import { ensureDatabaseReady } from "@/lib/db/ready"
 
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
@@ -11,31 +12,12 @@ import { notifyAdminRefundRequest } from "@/lib/notifications"
 import { markOrderRefunded, proxyRefund } from "@/actions/refund"
 import { createUserNotification } from "@/lib/db/queries"
 
-async function ensureRefundRequestsTable() {
-  await db.run(sql`
-    CREATE TABLE IF NOT EXISTS refund_requests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      order_id TEXT NOT NULL,
-      user_id TEXT,
-      username TEXT,
-      reason TEXT,
-      status TEXT DEFAULT 'pending',
-      admin_username TEXT,
-      admin_note TEXT,
-      created_at INTEGER DEFAULT (unixepoch() * 1000),
-      updated_at INTEGER DEFAULT (unixepoch() * 1000),
-      processed_at INTEGER
-    );
-    CREATE INDEX IF NOT EXISTS refund_requests_order_id_idx ON refund_requests(order_id);
-  `)
-}
-
 export async function requestRefund(orderId: string, reason: string) {
   const session = await auth()
   const user = session?.user
   if (!user?.id) throw new Error("Unauthorized")
 
-  await ensureRefundRequestsTable()
+  await ensureDatabaseReady()
 
   const order = await db.query.orders.findFirst({ where: eq(orders.orderId, orderId) })
   if (!order) throw new Error("Order not found")
@@ -82,7 +64,7 @@ export async function requestRefund(orderId: string, reason: string) {
 
 export async function adminApproveRefund(requestId: number, adminNote?: string) {
   await checkAdmin()
-  await ensureRefundRequestsTable()
+  await ensureDatabaseReady()
 
   const session = await auth()
   const username = session?.user?.username || null
@@ -147,7 +129,7 @@ export async function adminApproveRefund(requestId: number, adminNote?: string) 
 
 export async function adminRejectRefund(requestId: number, adminNote?: string) {
   await checkAdmin()
-  await ensureRefundRequestsTable()
+  await ensureDatabaseReady()
 
   const session = await auth()
   const username = session?.user?.username || null
@@ -195,7 +177,7 @@ export async function adminRejectRefund(requestId: number, adminNote?: string) {
 
 export async function getPendingRefundRequestCount() {
   await checkAdmin()
-  await ensureRefundRequestsTable()
+  await ensureDatabaseReady()
   const rows = await db.select({
     count: sql<number>`count(*)`
   }).from(refundRequests).where(eq(refundRequests.status, 'pending'))

@@ -1,9 +1,8 @@
 'use server'
+import { ensureDatabaseReady } from "@/lib/db/ready"
 
 import { setSetting, getSetting } from "@/lib/db/queries"
 import { revalidatePath, updateTag } from "next/cache"
-import { db } from "@/lib/db"
-import { sql } from "drizzle-orm"
 import { checkAdmin } from "@/actions/admin"
 
 export type AnnouncementConfig = {
@@ -80,13 +79,7 @@ export async function saveAnnouncement(config: AnnouncementConfig) {
         if (error.message?.includes('does not exist') ||
             error.code === '42P01' ||
             JSON.stringify(error).includes('42P01')) {
-            await db.run(sql`
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT,
-                    updated_at INTEGER DEFAULT (unixepoch() * 1000)
-                )
-            `)
+            await ensureDatabaseReady()
             // Retry the insert
             await setSetting('announcement', payload)
         } else {

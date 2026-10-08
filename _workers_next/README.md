@@ -111,7 +111,7 @@
 3. 配置构建设置：
    - **Path**: `_workers_next`
    - **Build command**: `npm install && npx opennextjs-cloudflare build`
-   - **Deploy command**: `npx wrangler deploy`
+   - **Deploy command**: `npm run db:migrate:remote && npx wrangler deploy`
 
 4. 点击 **Deploy**
 
@@ -124,8 +124,21 @@
 3. 确认改动发生在 **Path = `_workers_next`** 目录内（路径外改动可能不会触发此项目构建）。
 4. 确认构建命令/部署命令仍为：
    - Build: `npm install && npx opennextjs-cloudflare build`
-   - Deploy: `npx wrangler deploy`
+   - Deploy: `npm run db:migrate:remote && npx wrangler deploy`
 5. 若以上都正确仍未触发，可在 Cloudflare Dashboard 里断开并重新连接一次 Git 仓库授权。
+
+#### 数据库迁移与缓存
+
+从 schema 22 起，普通请求只检查数据库版本，不再自动建表、补列或回填历史数据。**已有项目也需要更新 Deploy command**，先完成迁移再发布新 Worker。迁移会保留现有数据，补齐缺失字段、创建库存索引；再次执行已完成的迁移只读取版本号。
+
+- 本地初始化：在 `_workers_next` 运行 `npm run db:migrate`，数据写入 `.wrangler/state/v3`。
+- 线上迁移：运行 `npm run db:migrate:remote`，通过 D1 官方 HTTP API 使用 Wrangler 已登录账号或 Cloudflare 构建环境的 API Token（需有 D1 写权限）。请配置 `account_id` 或 `CLOUDFLARE_ACCOUNT_ID`；此流程不依赖远程开发代理。
+- 本地发布：`npm run deploy` 已包含线上迁移。自定义 D1 名称时，请先在 `wrangler.json` 的 `DB` 绑定中填写正确的 `database_name` / `database_id`；迁移和 Worker 必须使用同一个数据库。
+- 定向验证：`npm test` 使用独立的临时本地 D1，不连接线上数据库。
+
+公共展示配置按白名单批量读取，缓存 60 秒；登录用户总数缓存 5 分钟。配置保存后会清理当前数据中心缓存，其他数据中心最多延迟 60 秒更新。缓存使用 Workers Cache API，无需新增 KV / R2 绑定；请正确设置 `NEXT_PUBLIC_APP_URL`。本地或 Cache API 不可用时退回实例内缓存。支付开关、积分奖励、凭据和用户配置保持实时读取。
+
+订单过期检查仍每分钟执行，过期卡密的物理清理改为每 10 分钟一次；库存查询始终排除过期卡密。结账清理只处理当前商品，空清理不写数据库。
 
 #### 3. 绑定 D1 数据库
 

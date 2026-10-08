@@ -1,4 +1,5 @@
 'use server'
+import { ensureDatabaseReady } from "@/lib/db/ready"
 
 import { db } from "@/lib/db"
 import { cards, orders, refundRequests, loginUsers } from "@/lib/db/schema"
@@ -98,6 +99,7 @@ export async function markOrderDelivered(orderId: string) {
 
 export async function cancelOrder(orderId: string) {
   await checkAdmin()
+  await ensureDatabaseReady()
   if (!orderId) throw new Error("Missing order id")
 
   // No transaction - D1 doesn't support SQL transactions
@@ -114,12 +116,6 @@ export async function cancelOrder(orderId: string) {
   }
 
   await db.update(orders).set({ status: 'cancelled' }).where(eq(orders.orderId, orderId))
-  try {
-    await db.run(sql.raw(`ALTER TABLE cards ADD COLUMN reserved_order_id TEXT`));
-  } catch { /* duplicate column */ }
-  try {
-    await db.run(sql.raw(`ALTER TABLE cards ADD COLUMN reserved_at INTEGER`));
-  } catch { /* duplicate column */ }
   await db.update(cards).set({ reservedOrderId: null, reservedAt: null })
     .where(sql`${cards.reservedOrderId} = ${orderId} AND ${cards.isUsed} = false`)
 
@@ -150,6 +146,7 @@ export async function updateOrderEmail(orderId: string, email: string | null) {
 }
 
 async function deleteOneOrder(orderId: string) {
+  await ensureDatabaseReady()
   const order = await db.query.orders.findFirst({ where: eq(orders.orderId, orderId) })
   if (!order) return
 
@@ -161,12 +158,6 @@ async function deleteOneOrder(orderId: string) {
   }
 
   // Release reserved card if any
-  try {
-    await db.run(sql.raw(`ALTER TABLE cards ADD COLUMN reserved_order_id TEXT`));
-  } catch { /* duplicate column */ }
-  try {
-    await db.run(sql.raw(`ALTER TABLE cards ADD COLUMN reserved_at INTEGER`));
-  } catch { /* duplicate column */ }
 
   await db.update(cards).set({ reservedOrderId: null, reservedAt: null })
     .where(sql`${cards.reservedOrderId} = ${orderId} AND ${cards.isUsed} = false`)

@@ -1,4 +1,5 @@
 import { db } from "@/lib/db"
+import { ensureDatabaseReady } from "@/lib/db/ready"
 import { cards } from "@/lib/db/schema"
 import { desc, sql } from "drizzle-orm"
 import { getProductForAdmin } from "@/lib/db/queries"
@@ -30,20 +31,7 @@ export default async function CardsPage({ params }: { params: Promise<{ id: stri
 
         if (!isTableOrColumnMissing) throw error
 
-        await db.run(sql`
-            CREATE TABLE IF NOT EXISTS cards (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-                card_key TEXT NOT NULL,
-                is_used INTEGER DEFAULT 0,
-                reserved_order_id TEXT,
-                reserved_at INTEGER,
-                expires_at INTEGER,
-                used_at INTEGER,
-                created_at INTEGER DEFAULT (unixepoch() * 1000)
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS cards_product_id_card_key_uq ON cards(product_id, card_key);
-        `)
+        await ensureDatabaseReady()
 
         unusedCards = await db.select()
             .from(cards)

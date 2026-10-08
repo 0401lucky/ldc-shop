@@ -1,4 +1,5 @@
 'use server'
+import { ensureDatabaseReady } from "@/lib/db/ready"
 
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
@@ -112,7 +113,7 @@ export async function saveProduct(formData: FormData) {
     const doSave = async () => {
         // Auto-create category if it doesn't exist
         if (category) {
-            await ensureCategoriesTable()
+            await ensureDatabaseReady()
             await db.run(sql`
                 INSERT INTO categories (name, updated_at) 
                 VALUES (${category}, (unixepoch() * 1000)) 
@@ -161,42 +162,8 @@ export async function saveProduct(formData: FormData) {
         })
     }
 
-    // Ensure all product columns exist before saving
-    const ensureColumns = async () => {
-        try {
-            await db.run(sql.raw(`ALTER TABLE products ADD COLUMN compare_at_price TEXT`));
-        } catch { /* column exists */ }
-        try {
-            await db.run(sql.raw(`ALTER TABLE products ADD COLUMN max_points_discount TEXT`));
-        } catch { /* column exists */ }
-        try {
-            await db.run(sql.raw(`ALTER TABLE products ADD COLUMN is_hot INTEGER DEFAULT 0`));
-        } catch { /* column exists */ }
-        try {
-            await db.run(sql.raw(`ALTER TABLE products ADD COLUMN purchase_warning TEXT`));
-        } catch { /* column exists */ }
-        try {
-            await db.run(sql.raw(`ALTER TABLE products ADD COLUMN is_shared INTEGER DEFAULT 0`));
-        } catch { /* column exists */ }
-        try {
-            await db.run(sql.raw(`ALTER TABLE products ADD COLUMN visibility_level INTEGER DEFAULT -1`));
-        } catch { /* column exists */ }
-        try {
-            await db.run(sql.raw(`ALTER TABLE products ADD COLUMN product_images TEXT`));
-        } catch { /* column exists */ }
-    }
-
-    try {
-        await doSave()
-    } catch (error: any) {
-        const errorString = JSON.stringify(error) + (error?.message || '')
-        if (errorString.includes('42703') || errorString.includes('no such column') || errorString.includes('SQLITE_ERROR')) {
-            await ensureColumns()
-            await doSave()
-        } else {
-            throw error
-        }
-    }
+    await ensureDatabaseReady()
+    await doSave()
 
     try {
         await recalcProductAggregates(id)
@@ -566,13 +533,7 @@ export async function saveShopName(rawName: string) {
         if (error.message?.includes('does not exist') ||
             error.code === '42P01' ||
             JSON.stringify(error).includes('42P01')) {
-            await db.run(sql`
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT,
-                    updated_at INTEGER DEFAULT (unixepoch() * 1000)
-                )
-            `)
+            await ensureDatabaseReady()
             await setSetting('shop_name', name)
         } else {
             throw error
@@ -875,23 +836,9 @@ export async function testEmailNotification(to: string) {
     return await testResendEmail(to)
 }
 
-async function ensureCategoriesTable() {
-    await db.run(sql`
-        CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            icon TEXT,
-            sort_order INTEGER DEFAULT 0,
-            created_at INTEGER DEFAULT (unixepoch() * 1000),
-            updated_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS categories_name_uq ON categories(name);
-    `)
-}
-
 export async function saveCategory(formData: FormData) {
     await checkAdmin()
-    await ensureCategoriesTable()
+    await ensureDatabaseReady()
 
     const idRaw = formData.get('id') as string | null
     const name = String(formData.get('name') || '').trim()
@@ -915,7 +862,7 @@ export async function saveCategory(formData: FormData) {
 
 export async function deleteCategory(id: number) {
     await checkAdmin()
-    await ensureCategoriesTable()
+    await ensureDatabaseReady()
     await db.delete(categories).where(eq(categories.id, id))
     revalidatePath('/admin/categories')
     revalidatePath('/')

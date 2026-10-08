@@ -1,4 +1,5 @@
 "use server"
+import { ensureDatabaseReady } from "@/lib/db/ready"
 
 import { db } from "@/lib/db"
 import { userMessages, loginUsers } from "@/lib/db/schema"
@@ -7,20 +8,6 @@ import { auth } from "@/lib/auth"
 import { checkAdmin } from "@/actions/admin"
 import { revalidatePath } from "next/cache"
 import { notifyAdminUserMessage } from "@/lib/notifications"
-
-async function ensureUserMessagesTable() {
-    await db.run(sql`
-        CREATE TABLE IF NOT EXISTS user_messages(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL REFERENCES login_users(user_id) ON DELETE CASCADE,
-            username TEXT,
-            title TEXT NOT NULL,
-            body TEXT NOT NULL,
-            is_read INTEGER DEFAULT 0,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        )
-    `)
-}
 
 export async function sendUserMessage(title: string, body: string) {
     const session = await auth()
@@ -48,7 +35,7 @@ export async function sendUserMessage(title: string, body: string) {
         return { success: false, error: "profile.messages.missing" }
     }
 
-    await ensureUserMessagesTable()
+    await ensureDatabaseReady()
     await db.insert(userMessages).values({
         userId,
         username,
@@ -75,7 +62,7 @@ export async function sendUserMessage(title: string, body: string) {
 
 export async function getUnreadUserMessageCount() {
     await checkAdmin()
-    await ensureUserMessagesTable()
+    await ensureDatabaseReady()
     const rows = await db.select({ count: sql<number>`count(*)` })
         .from(userMessages)
         .where(eq(userMessages.isRead, false))
@@ -84,7 +71,7 @@ export async function getUnreadUserMessageCount() {
 
 export async function markUserMessageRead(id: number) {
     await checkAdmin()
-    await ensureUserMessagesTable()
+    await ensureDatabaseReady()
     await db.update(userMessages).set({ isRead: true }).where(eq(userMessages.id, id))
     revalidatePath("/admin/messages")
     return { success: true }
@@ -92,7 +79,7 @@ export async function markUserMessageRead(id: number) {
 
 export async function deleteUserMessage(id: number) {
     await checkAdmin()
-    await ensureUserMessagesTable()
+    await ensureDatabaseReady()
     await db.delete(userMessages).where(eq(userMessages.id, id))
     revalidatePath("/admin/messages")
     return { success: true }
@@ -103,14 +90,14 @@ export async function clearMyMessages() {
     const userId = session?.user?.id
     if (!userId) return { success: false, error: "Unauthorized" }
 
-    await ensureUserMessagesTable()
+    await ensureDatabaseReady()
     await db.delete(userMessages).where(eq(userMessages.userId, userId))
     return { success: true }
 }
 
 export async function clearUserMessages() {
     await checkAdmin()
-    await ensureUserMessagesTable()
+    await ensureDatabaseReady()
     await db.delete(userMessages)
     revalidatePath("/admin/messages")
     return { success: true }

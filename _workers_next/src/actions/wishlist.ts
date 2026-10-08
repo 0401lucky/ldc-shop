@@ -1,4 +1,5 @@
 "use server"
+import { ensureDatabaseReady } from "@/lib/db/ready"
 
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
@@ -6,41 +7,6 @@ import { loginUsers } from "@/lib/db/schema"
 import { eq, sql } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
 import { getSetting } from "@/lib/db/queries"
-
-async function safeAddColumn(table: string, column: string, definition: string) {
-    try {
-        await db.run(sql.raw(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`))
-    } catch (e: any) {
-        const errorString = (JSON.stringify(e) + String(e)).toLowerCase()
-        if (!errorString.includes("duplicate column")) throw e
-    }
-}
-
-async function ensureWishlistTables() {
-    await db.run(sql`
-        CREATE TABLE IF NOT EXISTS wishlist_items(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            description TEXT,
-            user_id TEXT,
-            username TEXT,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-        CREATE TABLE IF NOT EXISTS wishlist_votes(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_id INTEGER NOT NULL REFERENCES wishlist_items(id) ON DELETE CASCADE,
-            user_id TEXT NOT NULL REFERENCES login_users(user_id) ON DELETE CASCADE,
-            created_at INTEGER DEFAULT (unixepoch() * 1000)
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS wishlist_votes_item_user_uq ON wishlist_votes(item_id, user_id);
-    `)
-
-    await safeAddColumn('wishlist_items', 'description', 'TEXT')
-    await safeAddColumn('wishlist_items', 'user_id', 'TEXT')
-    await safeAddColumn('wishlist_items', 'username', 'TEXT')
-    await safeAddColumn('wishlist_items', 'created_at', 'INTEGER')
-    await safeAddColumn('wishlist_votes', 'created_at', 'INTEGER')
-}
 
 async function isBlockedUser(userId: string) {
     try {
@@ -85,7 +51,7 @@ export async function submitWishlistItem(title: string, description?: string) {
         return { success: false, error: "wishlist.descTooLong" }
     }
 
-    await ensureWishlistTables()
+    await ensureDatabaseReady()
     const result: any = await db.run(sql`
         INSERT INTO wishlist_items (title, description, user_id, username, created_at)
         VALUES (${cleanTitle}, ${cleanDesc || null}, ${userId}, ${username}, (unixepoch() * 1000))
@@ -138,7 +104,7 @@ export async function toggleWishlistVote(itemId: number) {
         return { success: false, error: "wishlist.invalidItem" }
     }
 
-    await ensureWishlistTables()
+    await ensureDatabaseReady()
 
     const existing: any = await db.run(sql`
         SELECT id FROM wishlist_votes

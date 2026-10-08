@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { cancelExpiredOrders, cleanupExpiredCardsIfNeeded } from "@/lib/db/queries";
 
 const CRON_TOKEN_HEADER = "x-cron-cleanup-token";
-const CARD_CLEANUP_THROTTLE_MS = 60 * 1000;
+const CARD_CLEANUP_INTERVAL_MINUTES = 10;
 
 function getCronToken(): string | null {
     const token = process.env.CRON_CLEANUP_TOKEN?.trim();
@@ -33,8 +33,11 @@ export async function POST(request: Request) {
     }
 
     const startedAt = Date.now();
+    // Expired cards are excluded by stock queries immediately. Physical deletion
+    // can run less often; order reservation cleanup still runs every minute.
+    const cleanCards = new Date(startedAt).getUTCMinutes() % CARD_CLEANUP_INTERVAL_MINUTES === 0;
     const [cardsResult, ordersResult] = await Promise.allSettled([
-        cleanupExpiredCardsIfNeeded(CARD_CLEANUP_THROTTLE_MS),
+        cleanCards ? cleanupExpiredCardsIfNeeded() : Promise.resolve(false),
         cancelExpiredOrders(),
     ]);
 

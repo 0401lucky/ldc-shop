@@ -1,4 +1,5 @@
 'use server'
+import { ensureDatabaseReady } from "@/lib/db/ready"
 
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
@@ -94,7 +95,7 @@ export async function createOrder(productId: string, quantity: number = 1, email
         } catch (error: any) {
             if (!isMissingColumnError(error)) throw error
             try {
-                await db.run(sql.raw(`ALTER TABLE products ADD COLUMN max_points_discount TEXT`))
+                await ensureDatabaseReady()
             } catch { /* column exists */ }
             return await query()
         }

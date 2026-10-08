@@ -3,6 +3,7 @@ import GitHub from "next-auth/providers/github"
 import { sql } from "drizzle-orm"
 import { db } from "@/lib/db"
 import { loginUsers } from "@/lib/db/schema"
+import { recordLoginUser } from "@/lib/db/queries"
 
 const githubClientId = process.env.GITHUB_ID || process.env.AUTH_GITHUB_ID
 const githubClientSecret = process.env.GITHUB_SECRET || process.env.AUTH_GITHUB_SECRET
@@ -414,6 +415,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                 if (user.trustLevel !== undefined) token.trustLevel = user.trustLevel
                 if (user.avatar_url) token.avatar_url = user.avatar_url
                 else if (user.image) token.avatar_url = user.image
+                await recordLoginUser(resolvedId, resolvedUsername || user.name || null, user.email || null)
                 return token
             }
 

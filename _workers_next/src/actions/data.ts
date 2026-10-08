@@ -4,7 +4,7 @@ import { db } from "@/lib/db"
 import { sql } from "drizzle-orm"
 import { revalidatePath, updateTag } from "next/cache"
 import { checkAdmin } from "@/actions/admin"
-import { recalcProductAggregatesForMany } from "@/lib/db/queries"
+import { recalcProductAggregatesForMany, invalidatePublicDataCache } from "@/lib/db/queries"
 import { products } from "@/lib/db/schema"
 
 async function executeStatement(statement: string) {
@@ -206,6 +206,7 @@ export async function importData(formData: FormData) {
             // best effort
         }
 
+        await invalidatePublicDataCache()
         revalidatePath('/admin')
         updateTag('home:products')
         updateTag('home:ratings')

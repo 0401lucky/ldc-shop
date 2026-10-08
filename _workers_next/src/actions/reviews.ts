@@ -1,4 +1,5 @@
 'use server'
+import { ensureDatabaseReady } from "@/lib/db/ready"
 
 import { auth } from '@/lib/auth'
 import { createReview, createReviewReply } from '@/lib/db/queries'
@@ -56,18 +57,7 @@ export async function submitReview(
         }
 
         // Ensure reviews table exists
-        await db.run(sql`
-            CREATE TABLE IF NOT EXISTS reviews (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                product_id TEXT NOT NULL,
-                order_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                username TEXT NOT NULL,
-                rating INTEGER NOT NULL,
-                comment TEXT,
-                created_at INTEGER DEFAULT (unixepoch() * 1000)
-            )
-        `)
+        await ensureDatabaseReady()
 
         // Check if already reviewed (now table definitely exists)
         const existingReview = await db.run(sql`
@@ -122,16 +112,7 @@ export async function submitReviewReply(
             return { success: false, error: 'review.replyTooLong' }
         }
 
-        await db.run(sql`
-            CREATE TABLE IF NOT EXISTS review_replies (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                review_id INTEGER NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
-                user_id TEXT NOT NULL,
-                username TEXT NOT NULL,
-                comment TEXT NOT NULL,
-                created_at INTEGER DEFAULT (unixepoch() * 1000)
-            )
-        `)
+        await ensureDatabaseReady()
 
         const review = await db.query.reviews.findFirst({
             where: eq(reviews.id, reviewId),
